@@ -1,5 +1,6 @@
 /*
- * ImageAnalysis — Core analysis page with upload, prediction, Grad-CAM, report
+ * ImageAnalysis — Core analysis page with upload, real EfficientNet-B0 prediction,
+ * Grad-CAM visualization, and medical report.
  * Style: Clinical Nebula — glassmorphism cards, animated probability bars
  */
 import { useState, useRef, useCallback } from "react";
@@ -22,18 +23,25 @@ import {
   Loader2,
   FileText,
   Thermometer,
+  Server,
 } from "lucide-react";
 
-// Simulated disease data
+// ---------------------------------------------------------------------------
+// Configuration
+// ---------------------------------------------------------------------------
+const ML_BACKEND_URL = import.meta.env.VITE_ML_BACKEND_URL || "";
+
+// Disease classes the model predicts
 const diseaseClasses = [
   "Normal",
-  "Retinoblastoma",
-  "Uveal Melanoma",
-  "Retinal Capillary Hemangioma",
-  "Choroidal Osteoma",
-  "Choroidal Hemangioma",
+  "Diabetic Retinopathy",
+  "Glaucoma",
+  "Cataract",
+  "Age-related Macular Degeneration",
+  "Retinal Detachment",
 ];
 
+// Medical information for each class
 const diseaseInfo: Record<string, {
   description: string;
   symptoms: string[];
@@ -42,92 +50,84 @@ const diseaseInfo: Record<string, {
   treatment: string;
 }> = {
   Normal: {
-    description: "The retina appears healthy with no signs of disease or abnormality. All retinal structures including the optic disc, macula, and blood vessels appear normal.",
+    description: "The retina appears healthy with no signs of disease or abnormality. All retinal structures including the optic disc, macula, and blood vessels appear within normal limits.",
     symptoms: ["No visual impairment", "No retinal abnormalities detected", "Clear fundus examination"],
     recommendedAction: "Routine eye examination every 1-2 years is recommended for maintaining eye health.",
     emergencyLevel: "Low",
     treatment: "No treatment required. Continue regular eye health monitoring.",
   },
-  Retinoblastoma: {
-    description: "A rare form of eye cancer that develops from the immature cells of a retina. It is the most common primary intraocular malignancy in children.",
-    symptoms: ["White reflection in pupil (leukocoria)", "Crossed eyes (strabismus)", "Redness of the eye", "Poor vision"],
-    recommendedAction: "Immediate referral to pediatric ophthalmology and oncology for comprehensive evaluation and staging.",
-    emergencyLevel: "Critical",
-    treatment: "Treatment options include focal therapy, chemotherapy, radiation therapy, or enucleation depending on stage and tumor size.",
-  },
-  "Uveal Melanoma": {
-    description: "The most common primary intraocular malignancy in adults, arising from melanocytes in the uveal tract including the choroid.",
-    symptoms: ["Blurred vision", "Flash of light sensation", "Change in iris color", "Growing dark spot on iris"],
-    recommendedAction: "Urgent referral to ocular oncology for further imaging (ultrasound, MRI) and treatment planning.",
+  "Diabetic Retinopathy": {
+    description: "Damage to retinal blood vessels caused by prolonged diabetes. May present with microaneurysms, hemorrhages, hard exudates, or neovascularization. Leading cause of blindness in working-age adults.",
+    symptoms: ["Blurred vision", "Floaters or dark spots", "Impaired color vision", "Sudden vision loss", "Fluctuating vision"],
+    recommendedAction: "Immediate referral to a retinal specialist. Urgent glycemic control consultation with endocrinology. Consider anti-VEGF therapy or pan-retinal photocoagulation.",
     emergencyLevel: "High",
-    treatment: "Treatment may include plaque brachytherapy, proton beam radiation, or enucleation for large tumors.",
+    treatment: "Anti-VEGF intravitreal injections, pan-retinal photocoagulation laser therapy, vitrectomy for advanced cases. Strict glycemic control.",
   },
-  "Retinal Capillary Hemangioma": {
-    description: "A benign vascular tumor of the retina that may occur as a solitary lesion or as part of von Hippel-Lindau disease.",
-    symptoms: ["Gradual vision loss", "Floaters", "Retinal detachment", "Glaucoma in advanced cases"],
-    recommendedAction: "Refer to retina specialist for monitoring and possible treatment to prevent complications.",
-    emergencyLevel: "Moderate",
-    treatment: "Observation for small lesions; laser photocoagulation, cryotherapy, or anti-VEGF therapy for progressive lesions.",
+  Glaucoma: {
+    description: "Progressive optic neuropathy characterized by optic disc cupping and retinal nerve fiber layer thinning. Elevated intraocular pressure damages the optic nerve, causing irreversible peripheral vision loss.",
+    symptoms: ["Gradual loss of peripheral vision", "Eye pain or headache", "Halos around lights", "Redness of the eye", "Nausea with eye pain"],
+    recommendedAction: "Urgent intraocular pressure measurement. Initiate topical IOP-lowering therapy. Visual field testing and OCT recommended.",
+    emergencyLevel: "High",
+    treatment: "Topical beta-blockers, prostaglandin analogs, alpha agonists. Surgical options include trabeculectomy, tube shunt, or minimally invasive glaucoma surgery (MIGS).",
   },
-  "Choroidal Osteoma": {
-    description: "A rare, benign, ossifying tumor of the choroid that typically occurs in young women. It consists of mature bone tissue within the choroid.",
-    symptoms: ["Gradual vision loss", "Metamorphopsia", "Scotoma (blind spot)", "Often asymptomatic initially"],
-    recommendedAction: "Regular monitoring by retina specialist. Referral to ocular oncology for confirmation.",
-    emergencyLevel: "Moderate",
-    treatment: "Observation for asymptomatic cases. Anti-VEGF therapy for choroidal neovascularization. Photodynamic therapy.",
+  Cataract: {
+    description: "Opacification of the crystalline lens causing reduced visual acuity, glare sensitivity, and color perception changes. May be age-related, congenital, traumatic, or secondary to systemic disease.",
+    symptoms: ["Clouded or blurred vision", "Increased sensitivity to glare", "Difficulty seeing at night", "Faded or yellowed colors", "Frequent changes in glasses prescription"],
+    recommendedAction: "Schedule phacoemulsification surgery if visual impairment significantly affects daily activities. Monitor progression with slit-lamp examination.",
+    emergencyLevel: "Medium",
+    treatment: "Phacoemulsification with intraocular lens (IOL) implantation. Pre-operative biometry for IOL power calculation. Modern techniques allow rapid visual recovery.",
   },
-  "Choroidal Hemangioma": {
-    description: "A benign, vascular tumor of the choroid that is typically present at birth. May be associated with Sturge-Weber syndrome.",
-    symptoms: ["Decreased visual acuity", "Metamorphopsia", "Hyperopia", "Exudative retinal detachment"],
-    recommendedAction: "Referral to retina specialist for evaluation and treatment planning to preserve vision.",
-    emergencyLevel: "Moderate",
-    treatment: "Observation if asymptomatic. Photodynamic therapy, laser photocoagulation, or radiation for symptomatic cases.",
+  "Age-related Macular Degeneration": {
+    description: "Degenerative changes in the macula, including drusen, geographic atrophy (dry AMD), or choroidal neovascularization (wet AMD). Leading cause of vision loss in adults over 60 in developed countries.",
+    symptoms: ["Distorted or wavy vision", "Central vision loss or blurriness", "Difficulty reading or recognizing faces", "Dark or empty areas in central vision", "Need for brighter light"],
+    recommendedAction: "Refer to retina specialist urgently. Consider anti-VEGF intravitreal injections for wet AMD. AREDS2 vitamin supplementation recommended for dry AMD.",
+    emergencyLevel: "High",
+    treatment: "Anti-VEGF injections (ranibizumab, aflibercept, bevacizumab) for wet AMD. Photodynamic therapy. AREDS2 supplements for dry AMD. Lifestyle modifications.",
+  },
+  "Retinal Detachment": {
+    description: "Separation of the neurosensory retina from the underlying retinal pigment epithelium. A medical emergency — delayed treatment can result in permanent vision loss. Risk factors include myopia, trauma, and previous eye surgery.",
+    symptoms: ["Sudden appearance of floaters", "Flashes of light (photopsia)", "Shadow or curtain over visual field", "Sudden decrease in vision", "Peripheral vision loss"],
+    recommendedAction: "EMERGENCY: Immediate surgical consultation required. Pars plana vitrectomy or scleral buckling may be indicated. Time-sensitive — vision loss risk increases hourly.",
+    emergencyLevel: "Critical",
+    treatment: "Emergency surgery: pneumatic retinopexy, scleral buckle, or pars plana vitrectomy with gas or silicone oil tamponade. Prognosis depends on macular involvement and time to treatment.",
   },
 };
 
-// Simulated analysis result
-function getSimulatedResult() {
-  const rand = Math.random();
-  if (rand > 0.3) {
-    return {
-      predictions: [
-        { label: "Normal", confidence: 99.91 },
-        { label: "Retinoblastoma", confidence: 0.04 },
-        { label: "Uveal Melanoma", confidence: 0.03 },
-        { label: "Retinal Capillary Hemangioma", confidence: 0.01 },
-        { label: "Choroidal Osteoma", confidence: 0.01 },
-        { label: "Choroidal Hemangioma", confidence: 0.00 },
-      ],
-    };
-  } else if (rand > 0.15) {
-    return {
-      predictions: [
-        { label: "Retinoblastoma", confidence: 94.7 },
-        { label: "Choroidal Hemangioma", confidence: 2.8 },
-        { label: "Uveal Melanoma", confidence: 1.5 },
-        { label: "Normal", confidence: 0.6 },
-        { label: "Retinal Capillary Hemangioma", confidence: 0.3 },
-        { label: "Choroidal Osteoma", confidence: 0.1 },
-      ],
-    };
-  } else {
-    return {
-      predictions: [
-        { label: "Uveal Melanoma", confidence: 87.3 },
-        { label: "Choroidal Osteoma", confidence: 5.2 },
-        { label: "Normal", confidence: 3.8 },
-        { label: "Retinal Capillary Hemangioma", confidence: 2.1 },
-        { label: "Choroidal Hemangioma", confidence: 1.1 },
-        { label: "Retinoblastoma", confidence: 0.5 },
-      ],
-    };
-  }
-}
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+type InferenceResult = {
+  success: boolean;
+  prediction: string;
+  confidence: number;
+  confidence_percentage: number;
+  class_probabilities: Record<string, number>;
+  diagnosis: {
+    disease: string;
+    confidence: number;
+    severity: string;
+    description: string;
+    recommendation: string;
+    severity_color: string;
+  };
+  gradcam: string;  // data:image/png;base64,...
+  original_image: string;  // data:image/png;base64,...
+  model_info: {
+    architecture: string;
+    num_classes: number;
+    classes: string[];
+    device: string;
+  };
+};
 
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 function getRiskColor(riskLevel: string) {
   switch (riskLevel) {
     case "Low": return "text-emerald-400 bg-emerald-400/10 border-emerald-400/30";
-    case "Moderate": return "text-amber-400 bg-amber-400/10 border-amber-400/30";
+    case "Moderate":
+    case "Medium": return "text-amber-400 bg-amber-400/10 border-amber-400/30";
     case "High": return "text-orange-400 bg-orange-400/10 border-orange-400/30";
     case "Critical": return "text-red-400 bg-red-400/10 border-red-400/30";
     default: return "text-gray-400 bg-gray-400/10 border-gray-400/30";
@@ -137,36 +137,79 @@ function getRiskColor(riskLevel: string) {
 function getRiskIcon(riskLevel: string) {
   switch (riskLevel) {
     case "Low": return CheckCircle;
-    case "Moderate": return AlertTriangle;
+    case "Moderate":
+    case "Medium": return AlertTriangle;
     case "High": return AlertTriangle;
     case "Critical": return AlertCircle;
     default: return Info;
   }
 }
 
+// ---------------------------------------------------------------------------
+// Main Component
+// ---------------------------------------------------------------------------
 export default function ImageAnalysis() {
   const [uploadedImage, setUploadedImage] = useState<string | null>(null);
+  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [result, setResult] = useState<{
-    predictions: { label: string; confidence: number }[];
-  } | null>(null);
+  const [result, setResult] = useState<InferenceResult | null>(null);
   const [showGradCam, setShowGradCam] = useState(false);
+  const [aiStatus, setAiStatus] = useState<"online" | "offline" | "unknown">("unknown");
+  const [analysisProgress, setAnalysisProgress] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Check ML backend health on mount
+  const checkHealth = useCallback(async () => {
+    if (!ML_BACKEND_URL) {
+      setAiStatus("unknown");
+      return;
+    }
+    try {
+      const resp = await fetch(`${ML_BACKEND_URL}/health`, { signal: AbortSignal.timeout(5000) });
+      if (resp.ok) {
+        setAiStatus("online");
+      } else {
+        setAiStatus("offline");
+      }
+    } catch {
+      setAiStatus("offline");
+    }
+  }, []);
+
+  // Simulate progress bar during analysis
+  const simulateProgress = useCallback(() => {
+    setAnalysisProgress(0);
+    const interval = setInterval(() => {
+      setAnalysisProgress(prev => {
+        if (prev >= 90) {
+          clearInterval(interval);
+          return 90;
+        }
+        return prev + Math.random() * 15 + 5;
+      });
+    }, 300);
+    return interval;
+  }, []);
 
   const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      const validTypes = ["image/jpeg", "image/jpg", "image/png"];
+      const validTypes = ["image/jpeg", "image/jpg", "image/png", "image/bmp", "image/tiff"];
       if (!validTypes.includes(file.type)) {
-        toast.error("Please upload a JPG, PNG, or JPEG file");
+        toast.error("Please upload a JPG, PNG, BMP, or TIFF image");
+        return;
+      }
+      if (file.size > 10 * 1024 * 1024) {
+        toast.error("File size exceeds 10MB limit");
         return;
       }
       const reader = new FileReader();
       reader.onload = (ev) => {
         setUploadedImage(ev.target?.result as string);
+        setUploadedFile(file);
         setResult(null);
         setShowGradCam(false);
-        toast.info("Image uploaded. Click 'Analyze' to begin.");
+        toast.info("Image uploaded. Click 'Analyze' to begin AI inference.");
       };
       reader.readAsDataURL(file);
     }
@@ -176,49 +219,154 @@ export default function ImageAnalysis() {
     e.preventDefault();
     const file = e.dataTransfer.files[0];
     if (file) {
-      const validTypes = ["image/jpeg", "image/jpg", "image/png"];
+      const validTypes = ["image/jpeg", "image/jpg", "image/png", "image/bmp", "image/tiff"];
       if (!validTypes.includes(file.type)) {
-        toast.error("Please upload a JPG, PNG, or JPEG file");
+        toast.error("Please upload a JPG, PNG, BMP, or TIFF image");
         return;
       }
       const reader = new FileReader();
       reader.onload = (ev) => {
         setUploadedImage(ev.target?.result as string);
+        setUploadedFile(file);
         setResult(null);
         setShowGradCam(false);
-        toast.info("Image uploaded. Click 'Analyze' to begin.");
+        toast.info("Image uploaded. Click 'Analyze' to begin AI inference.");
       };
       reader.readAsDataURL(file);
     }
   }, []);
 
-  const handleAnalyze = () => {
-    if (!uploadedImage) return;
+  const handleAnalyze = async () => {
+    if (!uploadedFile) return;
     setIsAnalyzing(true);
-    toast.loading("Processing retinal patterns...", { id: "analyzing" });
+    setShowGradCam(false);
+    setResult(null);
 
-    setTimeout(() => {
-      const simResult = getSimulatedResult();
-      setResult(simResult);
-      setIsAnalyzing(false);
-      setShowGradCam(true);
+    const progressInterval = simulateProgress();
+
+    try {
+      // If ML backend is configured, call the real API
+      if (ML_BACKEND_URL) {
+        const formData = new FormData();
+        formData.append("image", uploadedFile);
+
+        toast.loading("Sending image to EfficientNet-B0 for analysis...", { id: "analyzing" });
+
+        const response = await fetch(`${ML_BACKEND_URL}/predict`, {
+          method: "POST",
+          body: formData,
+        });
+
+        clearInterval(progressInterval);
+        setAnalysisProgress(100);
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || `Server returned ${response.status}`);
+        }
+
+        const data: InferenceResult = await response.json();
+
+        if (data.success) {
+          setResult(data);
+          setShowGradCam(true);
+          toast.dismiss("analyzing");
+          toast.success(`Prediction complete: ${data.prediction} (${data.confidence_percentage}%)`);
+          setAiStatus("online");
+        } else {
+          throw new Error("Inference returned no result");
+        }
+      } else {
+        // Fallback: simulate inference when no backend is connected
+        clearInterval(progressInterval);
+        setAnalysisProgress(100);
+
+        await new Promise(resolve => setTimeout(resolve, 2500));
+
+        const simResult = getSimulatedResult();
+        setResult(simResult);
+        setShowGradCam(true);
+        toast.dismiss("analyzing");
+        toast.success("Neural pathways analyzed successfully (simulated mode)");
+      }
+    } catch (error: any) {
+      clearInterval(progressInterval);
+      setAnalysisProgress(0);
       toast.dismiss("analyzing");
-      toast.success("Neural pathways analyzed successfully.");
-    }, 2500);
+      toast.error(`Analysis failed: ${error.message || "Unknown error"}`);
+      setAiStatus("offline");
+    } finally {
+      setIsAnalyzing(false);
+    }
   };
 
-  const topPrediction = result?.predictions[0];
-  const diseaseData = topPrediction ? diseaseInfo[topPrediction.label] : null;
+  const topPrediction = result?.prediction || result?.class_probabilities ? null : null;
+
+  // Extract top prediction from the result
+  const getTopPrediction = () => {
+    if (!result) return null;
+    if (result.prediction) {
+      const confidence = result.confidence_percentage || result.confidence * 100;
+      return { label: result.prediction, confidence };
+    }
+    return null;
+  };
+
+  const getPredictions = (): { label: string; confidence: number }[] => {
+    if (!result?.class_probabilities) return [];
+    return Object.entries(result.class_probabilities)
+      .sort(([, a], [, b]) => b - a)
+      .map(([label, conf]) => ({ label, confidence: conf * 100 }));
+  };
+
+  const topPred = getTopPrediction();
+  const allPredictions = getPredictions();
+  const diseaseData = topPred ? diseaseInfo[topPred.label] : null;
   const riskColor = diseaseData ? getRiskColor(diseaseData.emergencyLevel) : "";
   const RiskIcon = diseaseData ? getRiskIcon(diseaseData.emergencyLevel) : Info;
 
   return (
     <div className="space-y-6">
+      {/* ML Backend Warning Banner */}
+      {!ML_BACKEND_URL && (
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 flex items-start gap-3"
+        >
+          <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-semibold text-amber-300">Simulated Mode — No ML Backend Connected</p>
+            <p className="text-xs text-amber-300/70 mt-1">
+              This is a development preview. Predictions are simulated and not from a real AI model.
+              To enable real inference, deploy the ML backend on Render and set <code className="bg-amber-500/20 px-1.5 py-0.5 rounded font-mono text-[10px]">VITE_ML_BACKEND_URL</code> in Settings &gt; Secrets.
+              See <code className="bg-amber-500/20 px-1.5 py-0.5 rounded font-mono text-[10px]">ml-backend/DEPLOYMENT.md</code> for full instructions.
+            </p>
+          </div>
+        </motion.div>
+      )}
+
       {/* Page Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="font-display text-2xl font-bold">Image Analysis</h1>
           <p className="text-sm text-gray-400 mt-1">Upload a retinal image for AI-powered diagnosis</p>
+        </div>
+        {/* AI Status Badge */}
+        <div className="glass-card px-4 py-2 flex items-center gap-3">
+          <Server className="w-4 h-4 text-gray-400" />
+          <div className="flex items-center gap-2">
+            <div className={`w-2 h-2 rounded-full ${
+              aiStatus === "online" ? "bg-emerald-400 animate-pulse" :
+              aiStatus === "offline" ? "bg-red-400" : "bg-gray-400"
+            }`} />
+            <span className="font-mono text-xs">
+              {ML_BACKEND_URL ? (
+                aiStatus === "online" ? "ML Backend Online" :
+                aiStatus === "offline" ? "ML Backend Offline" : "Checking..."
+              ) : "Simulated Mode"}
+            </span>
+          </div>
         </div>
       </div>
 
@@ -248,7 +396,7 @@ export default function ImageAnalysis() {
                 <ImageIcon className="w-8 h-8 text-[#3B82F6]" />
               </motion.div>
               <p className="text-sm text-gray-400 mb-1">Drag and drop retina image</p>
-              <p className="text-xs text-gray-500 mb-4">JPG, PNG, JPEG — Max 10MB</p>
+              <p className="text-xs text-gray-500 mb-4">JPG, PNG, BMP, TIFF — Max 10MB</p>
               <Button
                 size="sm"
                 variant="outline"
@@ -268,7 +416,7 @@ export default function ImageAnalysis() {
                 />
               </div>
               <button
-                onClick={() => { setUploadedImage(null); setResult(null); }}
+                onClick={() => { setUploadedImage(null); setUploadedFile(null); setResult(null); setShowGradCam(false); }}
                 className="absolute top-2 right-2 w-8 h-8 rounded-full bg-black/60 flex items-center justify-center hover:bg-black/80 transition-colors"
               >
                 <X className="w-4 h-4" />
@@ -279,7 +427,7 @@ export default function ImageAnalysis() {
           <input
             ref={fileInputRef}
             type="file"
-            accept=".jpg,.jpeg,.png"
+            accept=".jpg,.jpeg,.png,.bmp,.tiff"
             className="hidden"
             onChange={handleFileChange}
           />
@@ -303,6 +451,43 @@ export default function ImageAnalysis() {
               )}
             </Button>
           )}
+
+          {/* Analysis Progress Bar */}
+          <AnimatePresence>
+            {isAnalyzing && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                className="mt-4"
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-mono text-gray-400">Processing</span>
+                  <span className="text-xs font-mono text-[#3B82F6]">{Math.round(analysisProgress)}%</span>
+                </div>
+                <div className="h-1.5 bg-white/5 rounded-full overflow-hidden">
+                  <motion.div
+                    className="h-full rounded-full bg-gradient-to-r from-[#3B82F6] to-[#60A5FA]"
+                    animate={{ width: `${analysisProgress}%` }}
+                    transition={{ duration: 0.3 }}
+                  />
+                </div>
+                <div className="flex items-center gap-2 mt-2">
+                  <motion.div
+                    animate={{ opacity: [0.3, 1, 0.3] }}
+                    transition={{ duration: 1.5, repeat: Infinity }}
+                    className="w-2 h-2 rounded-full bg-[#3B82F6]"
+                  />
+                  <span className="text-[11px] font-mono text-gray-500">
+                    {analysisProgress < 30 ? "Preprocessing image..." :
+                     analysisProgress < 60 ? "Running EfficientNet-B0 inference..." :
+                     analysisProgress < 90 ? "Generating Grad-CAM heatmap..." :
+                     "Finalizing results..."}
+                  </span>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
 
         {/* AI Prediction Card */}
@@ -325,57 +510,61 @@ export default function ImageAnalysis() {
           ) : result ? (
             <div className="space-y-5">
               {/* Disease Name */}
-              <div>
-                <div className="flex items-center gap-3 mb-2">
-                  <h4 className="font-display text-xl font-bold text-white">
-                    {topPrediction?.label}
-                  </h4>
-                  <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-mono border ${riskColor}`}>
-                    <RiskIcon className="w-3 h-3" />
-                    {diseaseData?.emergencyLevel} Risk
-                  </span>
+              {topPred && (
+                <div>
+                  <div className="flex items-center gap-3 mb-2">
+                    <h4 className="font-display text-xl font-bold text-white">
+                      {topPred.label}
+                    </h4>
+                    <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-mono border ${riskColor}`}>
+                      <RiskIcon className="w-3 h-3" />
+                      {diseaseData?.emergencyLevel} Risk
+                    </span>
+                  </div>
+                  <div className="font-mono text-3xl font-bold text-[#3B82F6]">
+                    {topPred.confidence.toFixed(2)}%
+                    <span className="text-sm text-gray-400 ml-2 font-body font-normal">confidence</span>
+                  </div>
                 </div>
-                <div className="font-mono text-3xl font-bold text-[#3B82F6]">
-                  {topPrediction?.confidence.toFixed(2)}%
-                  <span className="text-sm text-gray-400 ml-2 font-body font-normal">confidence</span>
-                </div>
-              </div>
+              )}
 
               {/* Probability Bars */}
-              <div className="space-y-3 pt-2">
-                <h5 className="text-xs font-mono text-gray-500 uppercase tracking-wider">Probability Distribution</h5>
-                {result.predictions.map((pred, i) => (
-                  <motion.div
-                    key={pred.label}
-                    initial={{ opacity: 0, x: -10 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: i * 0.08 }}
-                    className="space-y-1"
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className={`text-xs ${i === 0 ? "text-white font-medium" : "text-gray-400"}`}>
-                        {pred.label}
-                      </span>
-                      <span className={`font-mono text-xs ${i === 0 ? "text-[#3B82F6] font-semibold" : "text-gray-500"}`}>
-                        {pred.confidence.toFixed(2)}%
-                      </span>
-                    </div>
-                    <div className="h-2 bg-white/5 rounded-full overflow-hidden">
-                      <motion.div
-                        className="h-full rounded-full"
-                        initial={{ width: 0 }}
-                        animate={{ width: `${pred.confidence}%` }}
-                        transition={{ duration: 0.8, delay: i * 0.08, ease: "easeOut" }}
-                        style={{
-                          background: i === 0
-                            ? "linear-gradient(90deg, #3B82F6, #60A5FA)"
-                            : "rgba(59,130,246,0.2)",
-                        }}
-                      />
-                    </div>
-                  </motion.div>
-                ))}
-              </div>
+              {allPredictions.length > 0 && (
+                <div className="space-y-3 pt-2">
+                  <h5 className="text-xs font-mono text-gray-500 uppercase tracking-wider">Probability Distribution</h5>
+                  {allPredictions.map((pred, i) => (
+                    <motion.div
+                      key={pred.label}
+                      initial={{ opacity: 0, x: -10 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: i * 0.08 }}
+                      className="space-y-1"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className={`text-xs ${i === 0 ? "text-white font-medium" : "text-gray-400"}`}>
+                          {pred.label}
+                        </span>
+                        <span className={`font-mono text-xs ${i === 0 ? "text-[#3B82F6] font-semibold" : "text-gray-500"}`}>
+                          {pred.confidence.toFixed(2)}%
+                        </span>
+                      </div>
+                      <div className="h-2 bg-white/5 rounded-full overflow-hidden">
+                        <motion.div
+                          className="h-full rounded-full"
+                          initial={{ width: 0 }}
+                          animate={{ width: `${pred.confidence}%` }}
+                          transition={{ duration: 0.8, delay: i * 0.08, ease: "easeOut" }}
+                          style={{
+                            background: i === 0
+                              ? "linear-gradient(90deg, #3B82F6, #60A5FA)"
+                              : "rgba(59,130,246,0.2)",
+                          }}
+                        />
+                      </div>
+                    </motion.div>
+                  ))}
+                </div>
+              )}
             </div>
           ) : (
             <div className="flex flex-col items-center justify-center h-64 text-gray-500">
@@ -407,7 +596,7 @@ export default function ImageAnalysis() {
                 <div className="text-xs font-mono text-gray-500 mb-2 uppercase tracking-wider">Original Image</div>
                 <div className="rounded-xl overflow-hidden border border-blue-500/20">
                   <img
-                    src={uploadedImage || undefined}
+                    src={result.original_image || uploadedImage || undefined}
                     alt="Original retina"
                     className="w-full h-48 object-cover"
                   />
@@ -417,21 +606,12 @@ export default function ImageAnalysis() {
               {/* Heatmap */}
               <div>
                 <div className="text-xs font-mono text-gray-500 mb-2 uppercase tracking-wider">Grad-CAM Heatmap</div>
-                <div className="rounded-xl overflow-hidden border border-blue-500/20 relative h-48 bg-[#0B1220]">
-                  {/* Simulated heatmap overlay */}
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <div
-                      className="w-32 h-32 rounded-full"
-                      style={{
-                        background: "radial-gradient(circle, rgba(239,68,68,0.6) 0%, rgba(245,158,11,0.4) 30%, rgba(59,130,246,0.2) 60%, transparent 100%)",
-                      }}
-                    />
-                  </div>
-                  <div className="absolute bottom-2 right-2 flex items-center gap-1 px-2 py-1 rounded bg-black/60">
-                    <span className="text-[8px] font-mono text-red-400">Hot</span>
-                    <div className="w-12 h-2 rounded-full bg-gradient-to-r from-blue-500 via-yellow-500 to-red-500" />
-                    <span className="text-[8px] font-mono text-blue-400">Cold</span>
-                  </div>
+                <div className="rounded-xl overflow-hidden border border-blue-500/20">
+                  <img
+                    src={result.gradcam}
+                    alt="Grad-CAM heatmap"
+                    className="w-full h-48 object-cover"
+                  />
                 </div>
               </div>
 
@@ -440,16 +620,14 @@ export default function ImageAnalysis() {
                 <div className="text-xs font-mono text-gray-500 mb-2 uppercase tracking-wider">Overlay</div>
                 <div className="rounded-xl overflow-hidden border border-blue-500/20 relative h-48">
                   <img
-                    src={uploadedImage || undefined}
+                    src={result.original_image || uploadedImage || undefined}
                     alt="Overlay"
                     className="w-full h-full object-cover"
                   />
-                  <div
-                    className="absolute inset-0"
-                    style={{
-                      background: "radial-gradient(circle at 50% 50%, rgba(239,68,68,0.35) 0%, rgba(245,158,11,0.2) 25%, rgba(59,130,246,0.1) 50%, transparent 75%)",
-                      mixBlendMode: "screen",
-                    }}
+                  <img
+                    src={result.gradcam}
+                    alt="Heatmap overlay"
+                    className="absolute inset-0 w-full h-full object-cover mix-blend-screen opacity-60"
                   />
                 </div>
               </div>
@@ -460,7 +638,7 @@ export default function ImageAnalysis() {
 
       {/* Medical Report Card */}
       <AnimatePresence>
-        {result && (
+        {result && topPred && (
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
@@ -496,9 +674,9 @@ export default function ImageAnalysis() {
 
             <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
               {[
-                { label: "Prediction", value: topPrediction?.label || "—" },
-                { label: "Confidence", value: `${topPrediction?.confidence.toFixed(2)}%` },
-                { label: "Model Used", value: "EfficientNet-B0" },
+                { label: "Prediction", value: topPred.label },
+                { label: "Confidence", value: `${topPred.confidence.toFixed(2)}%` },
+                { label: "Model Used", value: result.model_info?.architecture || "EfficientNet-B0" },
                 { label: "Date", value: new Date().toLocaleDateString("en-US") },
               ].map((item) => (
                 <div key={item.label} className="bg-white/3 rounded-lg p-3 border border-white/5">
@@ -515,7 +693,7 @@ export default function ImageAnalysis() {
               <div className="border-t border-white/5 pt-6">
                 <h4 className="font-display text-base font-semibold mb-4 flex items-center gap-2">
                   <Info className="w-4 h-4 text-blue-400" />
-                  Disease Information — {topPrediction?.label}
+                  Disease Information — {topPred.label}
                 </h4>
 
                 <div className="grid md:grid-cols-2 gap-6">
@@ -563,6 +741,81 @@ export default function ImageAnalysis() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Check health on mount */}
+      <div style={{ display: "none" }}>
+        <HealthChecker onMount={checkHealth} />
+      </div>
     </div>
   );
+}
+
+// ---------------------------------------------------------------------------
+// Simulated result (fallback when no ML backend is connected)
+// ---------------------------------------------------------------------------
+function getSimulatedResult(): InferenceResult {
+  const rand = Math.random();
+  let predictions: Record<string, number>;
+
+  if (rand > 0.4) {
+    predictions = {
+      "Normal": 0.9912,
+      "Diabetic Retinopathy": 0.004,
+      "Glaucoma": 0.002,
+      "Cataract": 0.001,
+      "Age-related Macular Degeneration": 0.001,
+      "Retinal Detachment": 0.0006,
+    };
+  } else if (rand > 0.2) {
+    predictions = {
+      "Diabetic Retinopathy": 0.872,
+      "Normal": 0.061,
+      "Glaucoma": 0.032,
+      "Cataract": 0.018,
+      "Age-related Macular Degeneration": 0.012,
+      "Retinal Detachment": 0.005,
+    };
+  } else {
+    predictions = {
+      "Glaucoma": 0.753,
+      "Normal": 0.102,
+      "Diabetic Retinopathy": 0.078,
+      "Cataract": 0.034,
+      "Age-related Macular Degeneration": 0.021,
+      "Retinal Detachment": 0.012,
+    };
+  }
+
+  const topClass = Object.entries(predictions).sort(([, a], [, b]) => b - a)[0];
+  return {
+    success: true,
+    prediction: topClass[0],
+    confidence: topClass[1],
+    confidence_percentage: topClass[1] * 100,
+    class_probabilities: predictions,
+    diagnosis: {
+      disease: topClass[0],
+      confidence: topClass[1],
+      severity: diseaseInfo[topClass[0]]?.emergencyLevel || "Unknown",
+      description: diseaseInfo[topClass[0]]?.description || "",
+      recommendation: diseaseInfo[topClass[0]]?.recommendedAction || "",
+      severity_color: diseaseInfo[topClass[0]]?.emergencyLevel === "Critical" ? "#dc2626" : "#f59e0b",
+    },
+    gradcam: "",
+    original_image: "",
+    model_info: {
+      architecture: "EfficientNet-B0 (simulated)",
+      num_classes: 6,
+      classes: diseaseClasses,
+      device: "cpu (simulated)",
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Health checker component (runs once on mount)
+// ---------------------------------------------------------------------------
+function HealthChecker({ onMount }: { onMount: () => void }) {
+  useState(() => { onMount(); return null; });
+  return null;
 }

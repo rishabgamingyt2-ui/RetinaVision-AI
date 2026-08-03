@@ -1,0 +1,21 @@
+# Project TODO
+
+- [x] Restore custom DashboardLayout after full-stack upgrade
+- [x] Restore custom App.tsx with all routes after full-stack upgrade
+- [x] Restore custom index.css with Clinical Nebula theme
+- [x] Create Flask backend with EfficientNet-B0 model loading
+- [x] Create image preprocessing pipeline matching training
+- [x] Create Grad-CAM heatmap generation
+- [x] Create inference API endpoint returning JSON (disease, confidence, diagnosis, heatmap)
+- [x] Create Dockerfile for deployment with PyTorch runtime
+- [x] Create render.yaml for Render deployment
+- [x] Update frontend ImageAnalysis page to call real backend API
+- [x] Add loading animation during prediction
+- [x] Add AI status indicator showing model state
+- [x] Create Render deployment instructions document
+- [x] Test and polish the complete integration
+- [x] Fix Dockerfile CMD to use gunicorn instead of python for production
+- [x] Fix render.yaml dockerContext to ml-backend/ instead of repo root
+- [x] Add clear warning in simulated mode that real backend is needed for production
+- [x] Update deployment docs with corrected paths and working directory info
+- [x] Add .gitkeep placeholder for best_model.pth with instructions
