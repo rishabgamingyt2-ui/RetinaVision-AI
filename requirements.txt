@@ -1,0 +1,34 @@
+# RetinaVision AI - ML Backend Dependencies
+# Used for model training, inference, and Grad-CAM visualization
+
+# Deep Learning
+torch==2.4.0
+torchvision==0.19.0
+torchsummary==1.5.1
+
+# Model Architecture
+efficientnet-pytorch==0.7.1
+
+# Image Processing
+Pillow==10.4.0
+opencv-python-headless==4.10.0.84
+scikit-image==0.24.0
+
+# Explainable AI
+pytorch-grad-cam==1.5.2
+
+# Data Science & Visualization
+numpy==1.26.4
+pandas==2.2.2
+matplotlib==3.9.1
+seaborn==0.13.2
+scikit-learn==1.5.1
+
+# Web Backend (for serving model inference)
+flask==3.0.3
+flask-cors==4.0.1
+gunicorn==22.0.0
+
+# Utilities
+python-dotenv==1.0.1
+pydantic==2.8.2
