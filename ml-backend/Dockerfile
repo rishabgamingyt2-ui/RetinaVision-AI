@@ -1,13 +1,17 @@
 # RetinaVision AI — ML Backend Dockerfile
 # Deploy on Render, AWS ECS, or any container host
-# The Docker context is ml-backend/ (set in render.yaml)
+#
+# IMPORTANT: The model file (best_model.pth) is at the REPO ROOT.
+# When deploying on Render with context: . (repo root), the Dockerfile at
+# ml-backend/Dockerfile can access ../best_model.pth via COPY ../best_model.pth.
+# When deploying with context: ml-backend/, copy the model into ml-backend/ first.
 
 FROM python:3.11-slim
 
 # Prevent interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install system dependencies for OpenCV / PIL
+# Install system dependencies for PIL / image processing
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1-mesa-glx \
     libglib2.0-0 \
@@ -21,11 +25,12 @@ COPY requirements.txt .
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy all files from ml-backend/ into /app
+# Copy all files from the ml-backend/ directory
 COPY . .
 
-# Expect best_model.pth to be present in /app (same dir as app.py)
-# Upload it during build or mount it as a volume
+# If the build context is the repo root (context: .), also copy the model
+# from the parent directory. This line is a no-op if context is ml-backend/.
+COPY best_model.pth /app/best_model.pth 2>/dev/null || true
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \

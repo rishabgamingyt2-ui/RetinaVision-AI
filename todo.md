@@ -19,3 +19,11 @@
 - [x] Add clear warning in simulated mode that real backend is needed for production
 - [x] Update deployment docs with corrected paths and working directory info
 - [x] Add .gitkeep placeholder for best_model.pth with instructions
+- [x] Examine GitHub repo for best_model.pth — confirmed EfficientNet-B0, 6 classes, classifier.1 shape [6,1280], plain state_dict
+- [x] Flask backend already has correct preprocessing (ImageNet mean/std, 224x224) and model loading (plain state_dict handled)
+- [x] Removed getSimulatedResult(), replaced with error requiring ML backend URL, updated UI badges
+- [x] Wire frontend to call real backend API end-to-end
+- [x] Prepare Render (backend) and Vercel (frontend) deployment configs
+- [ ] Commit and push all ML backend + deployment files to GitHub
+- [ ] Verify end-to-end application works (backend inference + frontend display)
+- [ ] Deliver complete application to user

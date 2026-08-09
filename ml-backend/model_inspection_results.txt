@@ -1,0 +1,23 @@
+Model Inspection Results
+========================
+
+Model Architecture: EfficientNet-B0 (confirmed)
+- features.0.0.weight shape: [32, 3, 3, 3] - standard MBConv stem
+- 8 feature stages (features.0 through features.8)
+- classifier.1.weight shape: [6, 1280] - 6 output classes, 1280 input features
+- Standard EfficientNet-B0 bottleneck patterns (fc1/fc2 SE blocks, running_mean/var BN)
+
+Checkpoint Format: Direct state_dict (not wrapped in dict with keys like "model_state_dict")
+- The checkpoint IS a state_dict directly (not a dict with extra keys)
+- 360 total parameter tensors
+
+Output Classes: 6
+- Matches: Normal, Diabetic Retinopathy, Glaucoma, Cataract, AMD, Retinal Detachment
+
+Last Linear Layer: classifier.1
+- Weight: [6, 1280]
+- Bias: [6]
+- This is the standard EfficientNet-B0 classifier head
+
+Key insight: The checkpoint is a PLAIN state_dict, not wrapped. 
+This means the code should do model.load_state_dict(checkpoint) directly.

@@ -277,17 +277,13 @@ export default function ImageAnalysis() {
           throw new Error("Inference returned no result");
         }
       } else {
-        // Fallback: simulate inference when no backend is connected
+        // Real ML backend is required — no mock predictions allowed
         clearInterval(progressInterval);
-        setAnalysisProgress(100);
-
-        await new Promise(resolve => setTimeout(resolve, 2500));
-
-        const simResult = getSimulatedResult();
-        setResult(simResult);
-        setShowGradCam(true);
-        toast.dismiss("analyzing");
-        toast.success("Neural pathways analyzed successfully (simulated mode)");
+        setAnalysisProgress(0);
+        throw new Error(
+          "ML backend not connected. Set VITE_ML_BACKEND_URL in Settings > Secrets. " +
+          "Deploy the Flask backend from ml-backend/ first."
+        );
       }
     } catch (error: any) {
       clearInterval(progressInterval);
@@ -336,11 +332,11 @@ export default function ImageAnalysis() {
         >
           <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
           <div>
-            <p className="text-sm font-semibold text-amber-300">Simulated Mode — No ML Backend Connected</p>
+            <p className="text-sm font-semibold text-amber-300">ML Backend Not Connected</p>
             <p className="text-xs text-amber-300/70 mt-1">
-              This is a development preview. Predictions are simulated and not from a real AI model.
-              To enable real inference, deploy the ML backend on Render and set <code className="bg-amber-500/20 px-1.5 py-0.5 rounded font-mono text-[10px]">VITE_ML_BACKEND_URL</code> in Settings &gt; Secrets.
-              See <code className="bg-amber-500/20 px-1.5 py-0.5 rounded font-mono text-[10px]">ml-backend/DEPLOYMENT.md</code> for full instructions.
+              Real AI inference requires the Flask backend to be deployed and connected.
+              Set <code className="bg-amber-500/20 px-1.5 py-0.5 rounded font-mono text-[10px]">VITE_ML_BACKEND_URL</code> in Settings &gt; Secrets.
+              See <code className="bg-amber-500/20 px-1.5 py-0.5 rounded font-mono text-[10px]">ml-backend/DEPLOYMENT.md</code> for instructions.
             </p>
           </div>
         </motion.div>
@@ -364,7 +360,7 @@ export default function ImageAnalysis() {
               {ML_BACKEND_URL ? (
                 aiStatus === "online" ? "ML Backend Online" :
                 aiStatus === "offline" ? "ML Backend Offline" : "Checking..."
-              ) : "Simulated Mode"}
+              ) : "Backend Required"}
             </span>
           </div>
         </div>
@@ -442,6 +438,11 @@ export default function ImageAnalysis() {
                 <>
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                   Analyzing...
+                </>
+              ) : !ML_BACKEND_URL ? (
+                <>
+                  <AlertTriangle className="w-4 h-4 mr-2" />
+                  Connect ML Backend
                 </>
               ) : (
                 <>
@@ -595,11 +596,11 @@ export default function ImageAnalysis() {
               <div>
                 <div className="text-xs font-mono text-gray-500 mb-2 uppercase tracking-wider">Original Image</div>
                 <div className="rounded-xl overflow-hidden border border-blue-500/20">
-                  <img
-                    src={result.original_image || uploadedImage || undefined}
-                    alt="Original retina"
-                    className="w-full h-48 object-cover"
-                  />
+          <img
+            src={result.original_image || uploadedImage || undefined}
+            alt="Original retina"
+            className="w-full h-48 object-cover"
+          />
                 </div>
               </div>
 
@@ -748,68 +749,6 @@ export default function ImageAnalysis() {
       </div>
     </div>
   );
-}
-
-// ---------------------------------------------------------------------------
-// Simulated result (fallback when no ML backend is connected)
-// ---------------------------------------------------------------------------
-function getSimulatedResult(): InferenceResult {
-  const rand = Math.random();
-  let predictions: Record<string, number>;
-
-  if (rand > 0.4) {
-    predictions = {
-      "Normal": 0.9912,
-      "Diabetic Retinopathy": 0.004,
-      "Glaucoma": 0.002,
-      "Cataract": 0.001,
-      "Age-related Macular Degeneration": 0.001,
-      "Retinal Detachment": 0.0006,
-    };
-  } else if (rand > 0.2) {
-    predictions = {
-      "Diabetic Retinopathy": 0.872,
-      "Normal": 0.061,
-      "Glaucoma": 0.032,
-      "Cataract": 0.018,
-      "Age-related Macular Degeneration": 0.012,
-      "Retinal Detachment": 0.005,
-    };
-  } else {
-    predictions = {
-      "Glaucoma": 0.753,
-      "Normal": 0.102,
-      "Diabetic Retinopathy": 0.078,
-      "Cataract": 0.034,
-      "Age-related Macular Degeneration": 0.021,
-      "Retinal Detachment": 0.012,
-    };
-  }
-
-  const topClass = Object.entries(predictions).sort(([, a], [, b]) => b - a)[0];
-  return {
-    success: true,
-    prediction: topClass[0],
-    confidence: topClass[1],
-    confidence_percentage: topClass[1] * 100,
-    class_probabilities: predictions,
-    diagnosis: {
-      disease: topClass[0],
-      confidence: topClass[1],
-      severity: diseaseInfo[topClass[0]]?.emergencyLevel || "Unknown",
-      description: diseaseInfo[topClass[0]]?.description || "",
-      recommendation: diseaseInfo[topClass[0]]?.recommendedAction || "",
-      severity_color: diseaseInfo[topClass[0]]?.emergencyLevel === "Critical" ? "#dc2626" : "#f59e0b",
-    },
-    gradcam: "",
-    original_image: "",
-    model_info: {
-      architecture: "EfficientNet-B0 (simulated)",
-      num_classes: 6,
-      classes: diseaseClasses,
-      device: "cpu (simulated)",
-    },
-  };
 }
 
 // ---------------------------------------------------------------------------

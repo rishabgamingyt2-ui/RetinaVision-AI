@@ -74,7 +74,7 @@ function NavContent({ currentPage, onItemClick }: { currentPage: string; onItemC
           <div className="flex items-center gap-2 mb-2">
             <div className={`w-2 h-2 rounded-full ${((import.meta as any).env?.VITE_ML_BACKEND_URL) ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
             <span className={`font-mono text-[11px] ${((import.meta as any).env?.VITE_ML_BACKEND_URL) ? 'text-emerald-400' : 'text-amber-400'}`}>
-              {((import.meta as any).env?.VITE_ML_BACKEND_URL) ? 'ML Backend Online' : 'Simulated Mode'}
+              {((import.meta as any).env?.VITE_ML_BACKEND_URL) ? 'ML Backend Online' : 'Backend Required'}
             </span>
           </div>
           <div className="text-[10px] text-gray-500 font-mono">

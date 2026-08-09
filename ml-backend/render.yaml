@@ -1,9 +1,9 @@
 # Render Blueprint — RetinaVision ML Backend
 # Deploy via: https://dashboard.render.com/blueprints
-# 
-# IMPORTANT: The Docker context is "ml-backend/" — Dockerfile expects
-# to be run from that directory. Render will use dockerContext to set
-# the build context automatically.
+#
+# IMPORTANT: The Docker context is "." (repo root) so that best_model.pth
+# (located at repo root) is accessible during the Docker build.
+# The Dockerfile at ml-backend/Dockerfile copies it in.
 
 services:
   - type: web
@@ -16,8 +16,9 @@ services:
         value: best_model.pth
       - key: PORT
         value: 10000
+      - key: DEVICE
+        value: cpu
     healthCheckPath: /health
     dockerfilePath: ml-backend/Dockerfile
-    dockerContext: ml-backend
-    buildCommand: ""
+    dockerContext: .
     startCommand: "gunicorn -w 1 --bind 0.0.0.0:$PORT --timeout 120 --max-requests 500 app:app"
