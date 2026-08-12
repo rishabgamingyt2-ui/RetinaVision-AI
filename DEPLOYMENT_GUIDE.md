@@ -188,7 +188,7 @@ Example: `VITE_ML_BACKEND_URL=https://retinavision-ml-backend.onrender.com`
 
 ### Model not loading
 
-- Verify `best_model.pth` is committed to the repo root
+- Verify `best_model.pth` is present inside `ml-backend/` (the Docker context for Render)
 - Check Render logs for: "Model weights loaded successfully"
 - Ensure the model is EfficientNet-B0 with 6 output classes
 
@@ -203,7 +203,7 @@ Example: `VITE_ML_BACKEND_URL=https://retinavision-ml-backend.onrender.com`
 
 ```
 RetinaVision-AI/
-├── best_model.pth          ← Model weights (required in repo root)
+├── best_model.pth          ← Model weights (also copy into ml-backend/ before Render build)
 ├── vercel.json             ← Vercel frontend config
 ├── DEPLOYMENT_GUIDE.md     ← This file
 ├── ml-backend/

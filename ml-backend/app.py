@@ -295,6 +295,10 @@ def predict():
         # Open and preprocess the image
         img = Image.open(io.BytesIO(image_file.read()))
 
+        # CRITICAL: Convert to RGB immediately to handle RGBA, palette, or any
+        # other modes (4-channel images cause broadcast errors downstream).
+        img = img.convert("RGB")
+
         # Keep original for visualization
         original_img = img.copy()
         original_img = original_img.resize((512, 512), Image.LANCZOS)

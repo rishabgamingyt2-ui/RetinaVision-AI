@@ -29,7 +29,9 @@ import {
 // ---------------------------------------------------------------------------
 // Configuration
 // ---------------------------------------------------------------------------
-const ML_BACKEND_URL = import.meta.env.VITE_ML_BACKEND_URL || "";
+// Use same-origin /api/ml proxy (registered in server/_core/mlProxy.ts)
+// Falls back to direct VITE_ML_BACKEND_URL if configured (for deployed setups)
+const ML_BACKEND_URL = import.meta.env.VITE_ML_BACKEND_URL || "/api/ml";
 
 // Disease classes the model predicts
 const diseaseClasses = [
@@ -165,7 +167,8 @@ export default function ImageAnalysis() {
       return;
     }
     try {
-      const resp = await fetch(`${ML_BACKEND_URL}/health`, { signal: AbortSignal.timeout(5000) });
+      const healthUrl = ML_BACKEND_URL === "/api/ml" ? "/api/ml/health" : `${ML_BACKEND_URL}/health`;
+      const resp = await fetch(healthUrl, { signal: AbortSignal.timeout(5000) });
       if (resp.ok) {
         setAiStatus("online");
       } else {
@@ -252,7 +255,8 @@ export default function ImageAnalysis() {
 
         toast.loading("Sending image to EfficientNet-B0 for analysis...", { id: "analyzing" });
 
-        const response = await fetch(`${ML_BACKEND_URL}/predict`, {
+        const predictUrl = ML_BACKEND_URL === "/api/ml" ? "/api/ml/predict" : `${ML_BACKEND_URL}/predict`;
+        const response = await fetch(predictUrl, {
           method: "POST",
           body: formData,
         });

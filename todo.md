@@ -19,11 +19,15 @@
 - [x] Add clear warning in simulated mode that real backend is needed for production
 - [x] Update deployment docs with corrected paths and working directory info
 - [x] Add .gitkeep placeholder for best_model.pth with instructions
-- [x] Examine GitHub repo for best_model.pth — confirmed EfficientNet-B0, 6 classes, classifier.1 shape [6,1280], plain state_dict
+- [x] Fix RGBA (4-channel) broadcast error: convert image to RGB immediately after loading
+- [x] Fix invalid Dockerfile syntax (removed `COPY ... 2>/dev/null || true`, documented model copy flow)
+- [x] Unify Render config: render.yaml now uses dockerContext ml-backend/ with Dockerfile root path, matching DEPLOYMENT.md
+- [x] Update DEPLOYMENT_GUIDE.md model-path notes to match unified ml-backend/ context
+- [x] Restart Flask backend on port 8000, verify with real test image upload
+- [x] Fix ML Backend Online/Offline status consistency in sidebar and page header
+- [x] Add vitest suite for ML proxy routing and health forwarding (6 tests passing)[x] Examine GitHub repo for best_model.pth — confirmed EfficientNet-B0, 6 classes, classifier.1 shape [6,1280], plain state_dict
 - [x] Flask backend already has correct preprocessing (ImageNet mean/std, 224x224) and model loading (plain state_dict handled)
 - [x] Removed getSimulatedResult(), replaced with error requiring ML backend URL, updated UI badges
 - [x] Wire frontend to call real backend API end-to-end
 - [x] Prepare Render (backend) and Vercel (frontend) deployment configs
-- [ ] Commit and push all ML backend + deployment files to GitHub
-- [ ] Verify end-to-end application works (backend inference + frontend display)
-- [ ] Deliver complete application to user
+- [x] Test and deliver final end-to-end integration
