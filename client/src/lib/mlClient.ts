@@ -35,6 +35,13 @@ export function resolveMlBackend(): { base: string; mode: MlMode } {
   if (typeof window !== "undefined" && window.location.hostname === "localhost") {
     return { base: "/api/ml", mode: "proxy" };
   }
+  // On the deployed production site the Render primary is known to be
+  // unreachable from browsers (free-tier wake-up interstitial / Cloudflare
+  // challenge). Default to the sandbox fallback directly — the Render URL is
+  // still tried first if VITE_ML_BACKEND_URL is set explicitly to it.
+  if (typeof window !== "undefined" && window.location.hostname.endsWith(".manus.space")) {
+    return { base: FALLBACK_BACKEND_URL, mode: "direct" };
+  }
   return { base: RENDER_BACKEND_URL, mode: "direct" };
 }
 
@@ -81,13 +88,42 @@ export async function mlFetch(
   const maxAttempts = init?.maxAttempts ?? 1;
   const attemptDelayMs = init?.attemptDelayMs ?? 15_000;
 
+  // Race-based hard timeout: AbortSignal.timeout() is not reliable in all
+  // browser environments for requests stalled at the TLS/network layer (the
+  // Render wake-up interstitial never responds). A manual AbortController
+  // plus a racing timer guarantees the promise always rejects on timeout.
+  function withTimeout(fn: () => Promise<Response>): Promise<Response> {
+    return new Promise<Response>((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new DOMException("Request timed out", "TimeoutError")),
+        timeoutMs,
+      );
+      Promise.resolve()
+        .then(fn)
+        .then((r) => {
+          clearTimeout(timer);
+          resolve(r);
+        })
+        .catch((e) => {
+          clearTimeout(timer);
+          reject(e);
+        });
+    });
+  }
+
   let lastError: unknown;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
-      return await fetch(url, {
-        ...(init ?? {}),
-        signal: init?.signal ?? AbortSignal.timeout(timeoutMs),
-      });
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      const resp = await withTimeout(() =>
+        fetch(url, {
+          ...(init ?? {}),
+          signal: controller.signal,
+        }),
+      );
+      clearTimeout(timer);
+      return resp;
     } catch (err) {
       lastError = err;
       if (attempt < maxAttempts - 1) {

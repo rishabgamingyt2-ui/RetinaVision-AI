@@ -358,7 +358,9 @@ def create_gradcam_visualization(original_img, heatmap, alpha=0.5):
     overlay[..., 2] = ((1 - heatmap_resized) * 255).astype(np.uint8)  # Blue = inverse
 
     # Blend original image with heatmap
-    original_array = np.array(original_img).astype(np.float32)
+    # Normalize to RGB (3 channels) to avoid broadcast errors with RGBA images.
+    original_rgb = original_img.convert("RGB")
+    original_array = np.array(original_rgb).astype(np.float32)
     overlay_float = overlay.astype(np.float32)
 
     blended = (1 - alpha) * original_array + alpha * overlay_float

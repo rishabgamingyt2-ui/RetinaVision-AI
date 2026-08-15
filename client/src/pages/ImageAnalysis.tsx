@@ -262,16 +262,16 @@ export default function ImageAnalysis() {
 
         const predictUrl = mlMode === "proxy" ? "/api/ml/predict" : `${ML_BACKEND_URL}/predict`;
 
-        // Try the primary endpoint once with a short timeout (Render's free-tier
-        // wake-up interstitial never responds from a browser, so long retries
-        // just freeze the UI). On failure, fail over to the sandbox fallback.
+        // On the deployed production site the Resolve order defaults to the
+        // sandbox fallback (Render is unreachable from browsers). If the call
+        // fails, fall over to the other endpoint with a long tolerance window.
         let response: Response | null = null;
         let usedFallback = false;
         try {
           response = await mlFetch(predictUrl, {
             method: "POST",
             body: formData,
-            timeoutMs: 15_000,
+            timeoutMs: 150_000,
             maxAttempts: 1,
           });
           if (!response.ok) {
@@ -280,6 +280,7 @@ export default function ImageAnalysis() {
             throw new Error(`Primary endpoint failed`);
           }
         } catch (primaryErr) {
+          void primaryErr;
           markMlBackendUnreachable();
           const fallback = effectiveMlBackend();
           usedFallback = true;
