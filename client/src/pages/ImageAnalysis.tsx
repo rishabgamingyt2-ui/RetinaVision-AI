@@ -3,7 +3,7 @@
  * Grad-CAM visualization, and medical report.
  * Style: Clinical Nebula — glassmorphism cards, animated probability bars
  */
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -29,9 +29,11 @@ import {
 // ---------------------------------------------------------------------------
 // Configuration
 // ---------------------------------------------------------------------------
-// Use same-origin /api/ml proxy (registered in server/_core/mlProxy.ts)
-// Falls back to direct VITE_ML_BACKEND_URL if configured (for deployed setups)
-const ML_BACKEND_URL = import.meta.env.VITE_ML_BACKEND_URL || "/api/ml";
+// Direct browser calls to the Render ML backend (Option C):
+// https://retinavision-ml-backend.onrender.com
+import { resolveMlBackend, mlFetch } from "@/lib/mlClient";
+const { base: ML_BACKEND_URL, mode: mlMode } = resolveMlBackend();
+const ML_MODE_LABEL = mlMode === "direct" ? "Render (direct)" : "local proxy";
 
 // Disease classes the model predicts
 const diseaseClasses = [
@@ -160,24 +162,17 @@ export default function ImageAnalysis() {
   const [analysisProgress, setAnalysisProgress] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Check ML backend health on mount
+  // Check ML backend health on mount (Render free tier wakes on first request)
   const checkHealth = useCallback(async () => {
     if (!ML_BACKEND_URL) {
       setAiStatus("unknown");
       return;
     }
-    try {
-      const healthUrl = ML_BACKEND_URL === "/api/ml" ? "/api/ml/health" : `${ML_BACKEND_URL}/health`;
-      const resp = await fetch(healthUrl, { signal: AbortSignal.timeout(5000) });
-      if (resp.ok) {
-        setAiStatus("online");
-      } else {
-        setAiStatus("offline");
-      }
-    } catch {
-      setAiStatus("offline");
-    }
-  }, []);
+    setAiStatus(await import("@/lib/mlClient").then((m) => m.checkMlHealth()));
+  }, [ML_BACKEND_URL]);
+  useEffect(() => {
+    checkHealth();
+  }, [checkHealth]);
 
   // Simulate progress bar during analysis
   const simulateProgress = useCallback(() => {
@@ -255,10 +250,13 @@ export default function ImageAnalysis() {
 
         toast.loading("Sending image to EfficientNet-B0 for analysis...", { id: "analyzing" });
 
-        const predictUrl = ML_BACKEND_URL === "/api/ml" ? "/api/ml/predict" : `${ML_BACKEND_URL}/predict`;
-        const response = await fetch(predictUrl, {
+        const predictUrl = mlMode === "proxy" ? "/api/ml/predict" : `${ML_BACKEND_URL}/predict`;
+        const response = await mlFetch(predictUrl, {
           method: "POST",
           body: formData,
+          timeoutMs: 150_000,
+          maxAttempts: 3,
+          attemptDelayMs: 20_000,
         });
 
         clearInterval(progressInterval);
@@ -363,9 +361,10 @@ export default function ImageAnalysis() {
             <span className="font-mono text-xs">
               {ML_BACKEND_URL ? (
                 aiStatus === "online" ? "ML Backend Online" :
-                aiStatus === "offline" ? "ML Backend Offline" : "Checking..."
+                aiStatus === "offline" ? "ML Backend Offline" : "Checking (Render may be waking up)..."
               ) : "Backend Required"}
             </span>
+            <span className="font-mono text-[10px] text-gray-500 hidden sm:inline">{ML_MODE_LABEL}</span>
           </div>
         </div>
       </div>

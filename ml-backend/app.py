@@ -8,6 +8,8 @@ import os
 import io
 import base64
 import logging
+import threading
+import time
 from PIL import Image
 import numpy as np
 import torch
@@ -21,9 +23,97 @@ from flask_cors import CORS
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-APP_PORT = int(os.environ.get("PORT", 5000))
-MODEL_PATH = os.environ.get("MODEL_PATH", "best_model.pth")
-DEVICE = "cpu"  # Render free tier is CPU-only; override with "cuda" if GPU available
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+APP_PORT = int(os.environ.get("PORT", 8000))
+MODEL_PATH = os.environ.get("MODEL_PATH")
+if MODEL_PATH:
+    MODEL_PATH = os.path.abspath(
+        MODEL_PATH
+        if os.path.isabs(MODEL_PATH)
+        else os.path.join(BASE_DIR, MODEL_PATH)
+    )
+else:
+    MODEL_PATH = os.path.join(BASE_DIR, "best_model.pth")
+DEVICE = os.environ.get("DEVICE", "cpu")
+CORS_ORIGINS = os.environ.get(
+    "CORS_ORIGINS",
+    "http://localhost:3000,http://127.0.0.1:3000,"
+    "https://retinaiapp-7xguqjmt.manus.space,"
+    "https://*.manus.space"
+)
+
+if CORS_ORIGINS.strip() == "*":
+    ALLOWED_ORIGINS = "*"
+else:
+    _explicit = [
+        origin.strip()
+        for origin in CORS_ORIGINS.split(",")
+        if origin.strip() and not origin.strip().startswith("*")
+    ]
+
+    def _origin_allowed(origin):
+        """Allow explicit origins plus wildcard domain patterns like https://*.manus.space."""
+        if not origin:
+            return False
+        if origin in _explicit:
+            return True
+        for pattern in CORS_ORIGINS.split(","):
+            pattern = pattern.strip()
+            if pattern == "*":
+                return True
+            if "*" in pattern:
+                # e.g. "https://*.manus.space" -> suffix ".manus.space",
+                # accept origin with same scheme and matching domain suffix
+                try:
+                    scheme, rest = pattern.split("://", 1)
+                except ValueError:
+                    continue
+                if not origin.startswith(scheme + "://"):
+                    continue
+                suffix = rest.split("*", 1)[-1]  # ".manus.space"
+                if suffix and origin[len(scheme) + 3:].endswith(suffix):
+                    return True
+        return False
+
+    ALLOWED_ORIGINS = _explicit
+
+# ---------------------------------------------------------------------------
+# Flask App + Health Check (created EARLY so Render's health check passes
+# immediately, before the heavy PyTorch model load completes)
+# ---------------------------------------------------------------------------
+app = Flask(__name__)
+
+# ---------------------------------------------------------------------------
+# CORS — applied right after the Flask app object exists
+# ---------------------------------------------------------------------------
+if CORS_ORIGINS.strip() == "*":
+    ALLOWED_ORIGINS = "*"
+    CORS(app, resources={r"/*": {"origins": "*"}})
+else:
+    CORS(app, resources={r"/*": {"origins": _origin_allowed}})
+
+MODEL_READY = False
+MODEL_ERROR = None
+
+
+@app.route("/health", methods=["GET"])
+def health_check():
+    """Health check endpoint. Responds immediately — even while the model
+    is still loading — so Render's internal health check can pass.
+    model_ready indicates whether inference is available yet."""
+    if MODEL_READY:
+        status = "healthy"
+    elif MODEL_ERROR:
+        status = "degraded"
+    else:
+        status = "loading"
+    return jsonify({
+        "status": status,
+        "model_ready": MODEL_READY,
+        "model": "EfficientNet-B0",
+        "device": DEVICE,
+        "classes": len(CLASS_NAMES),
+    })
 
 CLASS_NAMES = [
     "Normal",
@@ -114,8 +204,29 @@ def load_model():
     return model
 
 
-# Load model at startup
-model = load_model()
+# ---------------------------------------------------------------------------
+# Model Loading — run in a background thread after the Flask app exists,
+# so /health responds immediately on Render's internal health check.
+# ---------------------------------------------------------------------------
+def _init_model_in_background():
+    global model, gradcam, MODEL_READY, MODEL_ERROR
+    try:
+        t0 = time.time()
+        model = load_model()
+        gradcam = GradCAM(model)
+        MODEL_READY = True
+        logger.info(
+            "Model initialization complete in %.1fs; inference is now live.",
+            time.time() - t0,
+        )
+    except Exception as exc:  # noqa: BLE001
+        MODEL_ERROR = str(exc)
+        logger.exception("Failed to load model: %s", exc)
+
+
+model = None
+gradcam = None
+threading.Thread(target=_init_model_in_background, daemon=True).start()
 
 # ---------------------------------------------------------------------------
 # Image Preprocessing (matches training pipeline)
@@ -248,27 +359,9 @@ def create_gradcam_visualization(original_img, heatmap, alpha=0.5):
     return PILImage.fromarray(blended)
 
 
-# Initialize GradCAM
-gradcam = GradCAM(model)
-
 # ---------------------------------------------------------------------------
 # Flask Routes
 # ---------------------------------------------------------------------------
-app = Flask(__name__)
-CORS(app)
-
-
-@app.route("/health", methods=["GET"])
-def health_check():
-    """Health check endpoint."""
-    return jsonify({
-        "status": "healthy",
-        "model": "EfficientNet-B0",
-        "device": DEVICE,
-        "classes": len(CLASS_NAMES),
-    })
-
-
 @app.route("/predict", methods=["POST"])
 def predict():
     """
@@ -277,6 +370,11 @@ def predict():
     Accepts: multipart/form-data with 'image' file field
     Returns: JSON with prediction, confidence, diagnosis, and Grad-CAM image
     """
+    if not MODEL_READY:
+        return jsonify({
+            "error": "Model is still loading. Please retry in a moment."
+        }), 503
+
     if "image" not in request.files:
         return jsonify({"error": "No image file provided. Use 'image' field."}), 400
 
@@ -294,10 +392,6 @@ def predict():
     try:
         # Open and preprocess the image
         img = Image.open(io.BytesIO(image_file.read()))
-
-        # CRITICAL: Convert to RGB immediately to handle RGBA, palette, or any
-        # other modes (4-channel images cause broadcast errors downstream).
-        img = img.convert("RGB")
 
         # Keep original for visualization
         original_img = img.copy()

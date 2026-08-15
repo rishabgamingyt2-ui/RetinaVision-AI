@@ -31,3 +31,25 @@
 - [x] Wire frontend to call real backend API end-to-end
 - [x] Prepare Render (backend) and Vercel (frontend) deployment configs
 - [x] Test and deliver final end-to-end integration
+- [ ] Diagnose why deployed frontend fails with "Failed to fetch" (localhost:8000 unreachable from production)
+- [ ] Make ML backend URL configurable via env/Settings (Settings page integration)
+- [ ] Add health-status-driven Online/Offline indicator on deployed site
+- [ ] Verify Flask backend routes (health/predict) work against real Render URL if provided
+- [ ] Test deployed endpoint and real image upload end-to-end
+- [ ] Rebuild, checkpoint, push to GitHub, and deliver
+- [ ] Audit app.py for every Flask/CORS/route/model-load occurrence and confirm creation order
+- [ ] Reproduce Render health-check timeout locally (model loading at import blocks /health readiness)
+- [ ] Fix root cause: ensure /health responds fast even during model load (or defer loading)
+- [ ] Test exact gunicorn startup command and curl /health timing locally
+- [ ] Commit + push fix to GitHub main, report commit hash
+- [ ] Verify Render deployment passes health check once redeployed
+- [ ] Wire deployed frontend to Render URL, test real inference, checkpoint
+- [x] Option C (user choice): Frontend calls Render backend directly (browser fetch) instead of /api/ml proxy
+  - [x] Add client-side ML backend URL config (Render URL + VITE fallback + dev fallback) in client/src/lib/mlClient.ts
+  - [x] Update ImageAnalysis prediction upload to fetch Render /predict directly (150s timeout, 3 retries with 20s gaps for cold start)
+  - [x] Update ML status health check to fetch Render /health directly (30s timeout)
+  - [x] Handle Render cold-start latency in UI (warming state, longer timeouts)
+  - [x] Keep /api/ml proxy working for dev sandbox Flask when Render URL not configured (localhost -> proxy mode)
+- [ ] Checkpoint (auto-publish) and verify deployed frontend URL
+- [ ] Test real retinal image upload on deployed site: /health + /predict end-to-end
+- [ ] Deliver final URL and results

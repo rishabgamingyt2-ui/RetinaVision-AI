@@ -7,12 +7,18 @@ import express from "express";
  * This allows the frontend to use same-origin requests (no CORS issues, no
  * need for external deployment URLs in development).
  *
- * The Flask backend URL is configurable via VITE_ML_BACKEND_URL or defaults to
- * http://localhost:8000 (the sandbox Flask dev server).
+ * Target resolution order:
+ * 1. ML_BACKEND_URL (server-side runtime env)
+ * 2. VITE_ML_BACKEND_URL (build-time env)
+ * 3. http://localhost:8000 (sandbox Flask dev server — development only).
+ *
+ * In the deployed production runtime, ML_BACKEND_URL/VITE_ML_BACKEND_URL must
+ * be set to the Render service URL; otherwise the proxy falls back to localhost
+ * which is unreachable from production.
  */
 
 const ML_BACKEND_URL =
-  process.env.VITE_ML_BACKEND_URL || process.env.ML_BACKEND_URL || "http://localhost:8000";
+  process.env.ML_BACKEND_URL || process.env.VITE_ML_BACKEND_URL || "http://localhost:8000";
 
 export function registerMLProxy(app: Router) {
   // Raw body parser for multipart/form-data (don't parse, just collect buffer)
@@ -28,7 +34,7 @@ export function registerMLProxy(app: Router) {
         const resp = await fetch(targetUrl, {
           method: "GET",
           headers: req.headers as Record<string, string>,
-          signal: AbortSignal.timeout(10000),
+          signal: AbortSignal.timeout(30000), // Render free-tier cold starts can exceed 10s
         });
         const body = await resp.json().catch(() => ({}));
         res.status(resp.status).json(body);

@@ -105,3 +105,27 @@ describe("ML proxy health forwarding", () => {
     }
   });
 });
+
+/**
+ * Production validation: confirms the configured ML_BACKEND_URL secret points
+ * to a live Render backend that answers /health with 200. This validates the
+ * secret itself (not the local proxy) so that "ML Backend Offline" in the
+ * deployed site can only come from the Render service actually being down.
+ */
+describe("configured ML_BACKEND_URL reaches the deployed Render backend", () => {
+  it("GETs /health on the configured ML_BACKEND_URL and receives 200", async () => {
+    const url = process.env.ML_BACKEND_URL || process.env.VITE_ML_BACKEND_URL;
+    if (!url) {
+      // Secret not configured: skip rather than fail (dev fallback applies).
+      console.log("[ML test] ML_BACKEND_URL not configured; skipping live check");
+      return;
+    }
+    const resp = await fetch(`${url.replace(/\/+$/, "")}/health`, {
+      signal: AbortSignal.timeout(40000),
+    });
+    expect(resp.status).toBe(200);
+    const body = await resp.json();
+    expect(body.status).toBe("healthy");
+    expect(body.model).toBe("EfficientNet-B0");
+  }, 60000);
+});

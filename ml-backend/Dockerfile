@@ -17,9 +17,10 @@ FROM python:3.11-slim
 # Prevent interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install system dependencies for PIL / image processing
+# Install system dependencies for Pillow / PyTorch (libgl1-mesa-glx was
+# removed from Debian Bookworm+; libgl1 provides the same GL runtime).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libgl1-mesa-glx \
+    libgl1 \
     libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
@@ -40,4 +41,5 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
 
 EXPOSE 10000
 
-CMD ["gunicorn", "-w", "1", "--bind", "0.0.0.0:10000", "--timeout", "120", "--max-requests", "500", "app:app"]
+# Render injects $PORT at runtime; fall back to 10000 for other hosts.
+CMD gunicorn -w 1 --bind "0.0.0.0:${PORT:-10000}" --timeout 120 --max-requests 500 app:app
