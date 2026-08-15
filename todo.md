@@ -53,9 +53,9 @@
 - [ ] Checkpoint (auto-publish) and verify deployed frontend URL
 - [ ] Test real retinal image upload on deployed site: /health + /predict end-to-end
 - [ ] Deliver final URL and results
-- [ ] Demonstrate end-to-end real inference via sandbox ML backend (while Render stuck)
-  - [ ] Verify local Flask backend (production app.py) running on port 8000
-  - [ ] Expose sandbox Flask backend via public URL
-  - [ ] Point frontend at public sandbox URL when Render unreachable
+- [x] Demonstrate end-to-end real inference via sandbox ML backend (while Render stuck)
+  - [x] Verify local Flask backend (production app.py) running on port 8000
+  - [x] Expose sandbox Flask backend via public URL (8000-i5ydqj0z7cacur3n4uku0-89aa4dc5.sg1.manus.computer)
+  - [x] Point frontend at public sandbox URL when Render unreachable (automatic failover in mlClient.ts + ImageAnalysis.tsx, checkpoint 7d192e3a)
   - [ ] Test real image upload → prediction → Grad-CAM on preview and deployed site
 - [ ] Render diagnosis: identify why service stays at "almost live" (needs user log/token)

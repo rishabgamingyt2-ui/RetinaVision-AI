@@ -33,10 +33,6 @@ import {
 // https://retinavision-ml-backend.onrender.com
 import { checkMlHealth, effectiveMlBackend, markMlBackendUnreachable, markMlBackendReachable, mlFetch } from "@/lib/mlClient";
 
-// Resolve fresh on every render so a Runtime-render override (or fallback) is picked up.
-const { base: ML_BACKEND_URL, mode: mlMode } = effectiveMlBackend();
-const ML_MODE_LABEL = mlMode === "direct" ? "Render (direct)" : "local proxy";
-
 // Disease classes the model predicts
 const diseaseClasses = [
   "Normal",
@@ -164,6 +160,16 @@ export default function ImageAnalysis() {
   const [analysisProgress, setAnalysisProgress] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Resolve the ML backend fresh on every render so a fallback switch is
+  // picked up immediately (previously computed at module scope, which captured
+  // stale values and kept calling the unreachable primary endpoint).
+  const { base: ML_BACKEND_URL, mode: mlMode, usingFallback } = effectiveMlBackend();
+  const ML_MODE_LABEL = usingFallback
+    ? "Sandbox (fallback)"
+    : mlMode === "direct"
+      ? "Render (direct)"
+      : "local proxy";
+
   // Check ML backend health on mount (Render free tier wakes on first request)
   const checkHealth = useCallback(async () => {
     if (!ML_BACKEND_URL) {
@@ -255,18 +261,29 @@ export default function ImageAnalysis() {
         toast.loading("Sending image to EfficientNet-B0 for analysis...", { id: "analyzing" });
 
         const predictUrl = mlMode === "proxy" ? "/api/ml/predict" : `${ML_BACKEND_URL}/predict`;
-        let response = await mlFetch(predictUrl, {
-          method: "POST",
-          body: formData,
-          timeoutMs: 150_000,
-          maxAttempts: 3,
-          attemptDelayMs: 20_000,
-        }).catch((err: unknown) => {
-          // Primary endpoint unreachable: mark it, switch to the sandbox fallback, retry once.
+
+        // Try the primary endpoint once with a short timeout (Render's free-tier
+        // wake-up interstitial never responds from a browser, so long retries
+        // just freeze the UI). On failure, fail over to the sandbox fallback.
+        let response: Response | null = null;
+        let usedFallback = false;
+        try {
+          response = await mlFetch(predictUrl, {
+            method: "POST",
+            body: formData,
+            timeoutMs: 15_000,
+            maxAttempts: 1,
+          });
+          if (!response.ok) {
+            // Non-2xx from primary: fail over.
+            response = null;
+            throw new Error(`Primary endpoint failed`);
+          }
+        } catch (primaryErr) {
           markMlBackendUnreachable();
-          void err;
           const fallback = effectiveMlBackend();
-          return mlFetch(`${fallback.base}/predict`, {
+          usedFallback = true;
+          response = await mlFetch(`${fallback.base}/predict`, {
             method: "POST",
             body: formData,
             timeoutMs: 150_000,
@@ -275,14 +292,18 @@ export default function ImageAnalysis() {
             markMlBackendReachable();
             return r;
           });
-        });
+        }
 
         clearInterval(progressInterval);
         setAnalysisProgress(100);
 
-        if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
-          throw new Error(errorData.error || `Server returned ${response.status}`);
+        if (!response) {
+          throw new Error("No response received from any backend");
+        }
+        const contentType = response.headers.get("content-type") || "";
+        if (!response.ok || !contentType.includes("application/json")) {
+          const text = await response.text().catch(() => "");
+          throw new Error(`Server returned ${response.status}: ${text.slice(0, 120)}`);
         }
 
         const data: InferenceResult = await response.json();
@@ -291,7 +312,9 @@ export default function ImageAnalysis() {
           setResult(data);
           setShowGradCam(true);
           toast.dismiss("analyzing");
-          toast.success(`Prediction complete: ${data.prediction} (${data.confidence_percentage}%)`);
+          toast.success(
+            `${usedFallback ? "Fallback backend: " : ""}Prediction complete: ${data.prediction} (${data.confidence_percentage}%)`,
+          );
           setAiStatus("online");
         } else {
           throw new Error("Inference returned no result");

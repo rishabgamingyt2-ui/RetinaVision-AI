@@ -18,7 +18,6 @@ import torch.nn.functional as F
 import torchvision.transforms as transforms
 import torchvision.models as models
 from flask import Flask, request, jsonify
-from flask_cors import CORS
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -42,40 +41,34 @@ CORS_ORIGINS = os.environ.get(
     "https://*.manus.space"
 )
 
-if CORS_ORIGINS.strip() == "*":
-    ALLOWED_ORIGINS = "*"
-else:
-    _explicit = [
-        origin.strip()
-        for origin in CORS_ORIGINS.split(",")
-        if origin.strip() and not origin.strip().startswith("*")
-    ]
-
-    def _origin_allowed(origin):
-        """Allow explicit origins plus wildcard domain patterns like https://*.manus.space."""
-        if not origin:
-            return False
-        if origin in _explicit:
-            return True
-        for pattern in CORS_ORIGINS.split(","):
-            pattern = pattern.strip()
-            if pattern == "*":
-                return True
-            if "*" in pattern:
-                # e.g. "https://*.manus.space" -> suffix ".manus.space",
-                # accept origin with same scheme and matching domain suffix
-                try:
-                    scheme, rest = pattern.split("://", 1)
-                except ValueError:
-                    continue
-                if not origin.startswith(scheme + "://"):
-                    continue
-                suffix = rest.split("*", 1)[-1]  # ".manus.space"
-                if suffix and origin[len(scheme) + 3:].endswith(suffix):
-                    return True
+def _origin_allowed(origin):
+    """Allow explicit origins plus wildcard domain patterns like https://*.manus.space."""
+    if not origin:
         return False
-
-    ALLOWED_ORIGINS = _explicit
+    if "*" in CORS_ORIGINS:
+        return True
+    explicit = [
+        o.strip()
+        for o in CORS_ORIGINS.split(",")
+        if o.strip() and not o.strip().startswith("*")
+    ]
+    if origin in explicit:
+        return True
+    for pattern in CORS_ORIGINS.split(","):
+        pattern = pattern.strip()
+        if "*" in pattern:
+            # e.g. "https://*.manus.space" -> suffix ".manus.space",
+            # accept origin with same scheme and matching domain suffix
+            try:
+                scheme, rest = pattern.split("://", 1)
+            except ValueError:
+                continue
+            if not origin.startswith(scheme + "://"):
+                continue
+            suffix = rest.split("*", 1)[-1]  # ".manus.space"
+            if suffix and origin[len(scheme) + 3 :].endswith(suffix):
+                return True
+    return False
 
 # ---------------------------------------------------------------------------
 # Flask App + Health Check (created EARLY so Render's health check passes
@@ -84,13 +77,28 @@ else:
 app = Flask(__name__)
 
 # ---------------------------------------------------------------------------
-# CORS — applied right after the Flask app object exists
+# CORS — applied right after the Flask app object exists.
+# flask-cors >= 6 no longer accepts a callable for `origins`, so we register
+# an after_request hook that implements the same allowlist logic (explicit
+# origins + wildcard patterns like https://*.manus.space) manually.
 # ---------------------------------------------------------------------------
-if CORS_ORIGINS.strip() == "*":
-    ALLOWED_ORIGINS = "*"
-    CORS(app, resources={r"/*": {"origins": "*"}})
-else:
-    CORS(app, resources={r"/*": {"origins": _origin_allowed}})
+
+
+@app.after_request
+def _add_cors_headers(response):
+    """Add CORS headers when the request's Origin is in the allowlist."""
+    request_origin = request.headers.get("Origin")
+    if request_origin and _origin_allowed(request_origin):
+        response.headers["Access-Control-Allow-Origin"] = request_origin
+        response.headers["Access-Control-Allow-Methods"] = (
+            "GET, POST, OPTIONS"
+        )
+        response.headers["Access-Control-Allow-Headers"] = (
+            "Content-Type, Authorization"
+        )
+        response.headers["Access-Control-Max-Age"] = "86400"
+        response.headers["Vary"] = "Origin"
+    return response
 
 MODEL_READY = False
 MODEL_ERROR = None
