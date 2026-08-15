@@ -31,7 +31,7 @@ import {
 // ---------------------------------------------------------------------------
 // Direct browser calls to the Render ML backend (Option C):
 // https://retinavision-ml-backend.onrender.com
-import { checkMlHealth, effectiveMlBackend, markMlBackendUnreachable, markMlBackendReachable, mlFetch } from "@/lib/mlClient";
+import { checkMlHealth, markMlBackendUnreachable, markMlBackendReachable, mlFetch, REQUEST_TIMEOUT_MS, resolveMlBackend } from "@/lib/mlClient";
 
 // Disease classes the model predicts
 const diseaseClasses = [
@@ -161,13 +161,11 @@ export default function ImageAnalysis() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Resolve the ML backend fresh on every render so a fallback switch is
-  // picked up immediately (previously computed at module scope, which captured
-  // stale values and kept calling the unreachable primary endpoint).
-  const { base: ML_BACKEND_URL, mode: mlMode, usingFallback } = effectiveMlBackend();
-  const ML_MODE_LABEL = usingFallback
-    ? "Sandbox (fallback)"
-    : mlMode === "direct"
-      ? "Render (direct)"
+  // picked up immediately.
+  const { base: ML_BACKEND_URL, mode: mlMode } = resolveMlBackend();
+  const ML_MODE_LABEL =
+    mlMode === "direct"
+      ? "ML backend (direct)"
       : "local proxy";
 
   // Check ML backend health on mount (Render free tier wakes on first request)
@@ -260,39 +258,50 @@ export default function ImageAnalysis() {
 
         toast.loading("Sending image to EfficientNet-B0 for analysis...", { id: "analyzing" });
 
-        const predictUrl = mlMode === "proxy" ? "/api/ml/predict" : `${ML_BACKEND_URL}/predict`;
+        const predictPath = mlMode === "proxy" ? "/api/ml/predict" : "/predict";
 
-        // On the deployed production site the Resolve order defaults to the
-        // sandbox fallback (Render is unreachable from browsers). If the call
-        // fails, fall over to the other endpoint with a long tolerance window.
+        // mlFetch handles endpoint selection, probing, and automatic failover.
+        // Total budget is strict: 30 seconds (REQUEST_TIMEOUT_MS). If the
+        // backend does not respond within that window, a clear error is shown
+        // — the UI never stays stuck at ~90%.
         let response: Response | null = null;
         let usedFallback = false;
+        const startedAt = Date.now();
         try {
-          response = await mlFetch(predictUrl, {
+          response = await mlFetch(predictPath, {
             method: "POST",
             body: formData,
-            timeoutMs: 150_000,
+            timeoutMs: REQUEST_TIMEOUT_MS,
             maxAttempts: 1,
           });
           if (!response.ok) {
-            // Non-2xx from primary: fail over.
             response = null;
-            throw new Error(`Primary endpoint failed`);
+            throw new Error(`ML backend returned HTTP ${response!.status}`);
           }
-        } catch (primaryErr) {
-          void primaryErr;
+          markMlBackendReachable();
+        } catch (primaryErr: any) {
           markMlBackendUnreachable();
-          const fallback = effectiveMlBackend();
-          usedFallback = true;
-          response = await mlFetch(`${fallback.base}/predict`, {
-            method: "POST",
-            body: formData,
-            timeoutMs: 150_000,
-            maxAttempts: 1,
-          }).then((r) => {
-            markMlBackendReachable();
-            return r;
-          });
+          // Retry once against the failover endpoint if time budget allows.
+          const elapsed = Date.now() - startedAt;
+          if (elapsed < REQUEST_TIMEOUT_MS - 4_000) {
+            usedFallback = true;
+            response = await mlFetch(predictPath, {
+              method: "POST",
+              body: formData,
+              timeoutMs: Math.max(4_000, REQUEST_TIMEOUT_MS - elapsed),
+              maxAttempts: 1,
+            }).then((r) => {
+              markMlBackendReachable();
+              return r;
+            });
+          } else {
+            const timedOut = primaryErr instanceof DOMException && primaryErr.name === "TimeoutError";
+            throw new Error(
+              timedOut
+                ? "The ML backend did not respond within 30 seconds. Please try again."
+                : (primaryErr?.message || "Connection to ML backend failed"),
+            );
+          }
         }
 
         clearInterval(progressInterval);
@@ -403,7 +412,7 @@ export default function ImageAnalysis() {
             <span className="font-mono text-xs">
               {ML_BACKEND_URL ? (
                 aiStatus === "online" ? "ML Backend Online" :
-                aiStatus === "offline" ? "ML Backend Offline" : "Checking (Render may be waking up)..."
+                aiStatus === "offline" ? "ML Backend Offline" : "Checking backend..."
               ) : "Backend Required"}
             </span>
             <span className="font-mono text-[10px] text-gray-500 hidden sm:inline">{ML_MODE_LABEL}</span>

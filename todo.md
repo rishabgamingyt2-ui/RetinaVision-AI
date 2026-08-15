@@ -59,3 +59,14 @@
   - [x] Point frontend at public sandbox URL when Render unreachable (automatic failover in mlClient.ts + ImageAnalysis.tsx, checkpoint 7d192e3a)
   - [ ] Test real image upload → prediction → Grad-CAM on preview and deployed site
 - [ ] Render diagnosis: identify why service stays at "almost live" (needs user log/token)
+
+## Follow-up round (user directive)
+
+- [x] Verify backend /health returns HTTP 200 (Render frozen; sandbox fallback verified healthy)
+- [x] Verify /predict returns JSON for a real retinal image (fallback: 200, full JSON with gradcam)
+- [x] Remove Render wake-up check ("Checking (Render may be waking up)...") from analysis page
+- [x] Remove endless loading state / spinner stuck at ~90%
+- [x] Strict 30-second timeout per request; clear error shown instead of stuck UI
+- [x] Automatic retry via probe-based failover to sandbox fallback backend
+- [x] End-to-end browser test: prediction (AMD 40.34%) + confidence + Grad-CAM heatmap displayed
+- [x] Commit and auto-publish all fixes

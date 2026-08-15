@@ -1,31 +1,42 @@
 /**
  * ML client — direct browser calls to the ML backend.
  *
- * Architecture (Option C, user-chosen): the browser calls the Render-hosted
- * Flask backend directly. Server-to-server calls from the deployed sandbox to
- * Render are blocked by Render's Cloudflare bot challenge, so the Express
- * /api/ml proxy is only used as a dev-mode fallback (when VITE_ML_BACKEND_URL
- * is unset, requests go to /api/ml which the sandbox proxy forwards to the
- * local Flask instance).
+ * Architecture (Option C, user-chosen): the browser calls the ML backend
+ * directly (no proxy). Render is the primary endpoint; when it fails to
+ * respond within a short probe window the client transparently fails over to
+ * the public sandbox fallback backend so the UI never hangs.
  *
- * Version marker (forces fresh production build): v2.3-hardened-timeouts
+ * Hard guarantees for the analyze flow:
+ *  - Total budget per request: 30s. After 30s the UI shows a clear error.
+ *  - The wake-up check ("Checking (Render may be waking up)...") was removed;
+ *    the UI never enters an endless loading state.
+ *  - Automatic retry: the Render endpoint is probed once with a short
+ *    deadline; on failure (or a Cloudflare-style interstitial) the request is
+ *    immediately retried against the sandbox fallback.
  */
 
 /** Deployed ML backend on Render (primary production endpoint). */
 const RENDER_BACKEND_URL = "https://retinavision-ml-backend.onrender.com";
 
 /** Fallback sandbox ML backend (public URL of the Flask backend in the Manus sandbox).
- *  Used automatically when the Render endpoint does not respond (Render free-tier
- *  services can get stuck in the wake-up interstitial or be placed behind the
- *  Cloudflare challenge). */
+ *  Used automatically when the Render endpoint does not respond within the
+ *  probe window. */
 const FALLBACK_BACKEND_URL = "https://8000-i5ydqj0z7cacur3n4uku0-89aa4dc5.sg1.manus.computer";
 
 export type MlMode = "direct" | "proxy";
 
+/** Maximum budget for a single request (per user requirement: 30s). */
+export const REQUEST_TIMEOUT_MS = 30_000;
+
+/** Short probe deadline for the primary endpoint before instant failover. */
+export const PRIMARY_PROBE_MS = 8_000;
+
 /**
  * Resolve the ML backend base URL.
  * - VITE_ML_BACKEND_URL set explicitly -> use it (custom deployment override)
- * - otherwise -> production Render URL (direct browser calls)
+ * - dev sandbox -> local Flask reachable via the Express proxy only.
+ * - deployed production site -> sandbox fallback directly (Render free-tier
+ *   is blocked by the Cloudflare challenge from browsers).
  * The result `base` has no trailing slash; `mode` tells callers how to reach it.
  */
 export function resolveMlBackend(): { base: string; mode: MlMode } {
@@ -33,117 +44,136 @@ export function resolveMlBackend(): { base: string; mode: MlMode } {
   if (envUrl) {
     return { base: envUrl.replace(/\/+$/, ""), mode: "direct" };
   }
-  // Dev sandbox: local Flask reachable via the Express proxy only.
   if (typeof window !== "undefined" && window.location.hostname === "localhost") {
     return { base: "/api/ml", mode: "proxy" };
   }
-  // On the deployed production site the Render primary is known to be
-  // unreachable from browsers (free-tier wake-up interstitial / Cloudflare
-  // challenge). Default to the sandbox fallback directly — the Render URL is
-  // still tried first if VITE_ML_BACKEND_URL is set explicitly to it.
   if (typeof window !== "undefined" && window.location.hostname.endsWith(".manus.space")) {
     return { base: FALLBACK_BACKEND_URL, mode: "direct" };
   }
   return { base: RENDER_BACKEND_URL, mode: "direct" };
 }
 
-/** Cached fallback state so callers can prefer the working endpoint without re-probing. */
-let renderUnreachableSince: number | null = null;
-const FALLBACK_TIMEOUT_MS = 30_000;
-
-/**
- * If the Render endpoint has been unreachable for a while, use the sandbox
- * fallback automatically. Renders stuck in the wake-up interstitial / behind
- * the Cloudflare challenge never respond from a browser either (observed
- * behavior), so we transparently fail over to the public sandbox backend.
- */
-export function effectiveMlBackend(): { base: string; mode: MlMode; usingFallback: boolean } {
-  const primary = resolveMlBackend();
-  const usingFallback =
-    renderUnreachableSince !== null && Date.now() - renderUnreachableSince > FALLBACK_TIMEOUT_MS;
-  if (usingFallback && primary.base !== FALLBACK_BACKEND_URL) {
-    return { base: FALLBACK_BACKEND_URL, mode: "direct", usingFallback: true };
-  }
-  return { ...primary, usingFallback: false };
-}
+/** One-time probe result for the primary endpoint (kept for the session). */
+let primaryProbed = false;
+let primaryOk = false;
 
 /** Mark the primary endpoint unreachable (caller observed a fetch failure). */
 export function markMlBackendUnreachable(): void {
-  if (renderUnreachableSince === null) renderUnreachableSince = Date.now();
+  primaryProbed = true;
+  primaryOk = false;
 }
 
 /** Reset the unreachable flag (e.g. after a successful response). */
 export function markMlBackendReachable(): void {
-  renderUnreachableSince = null;
+  primaryProbed = true;
+  primaryOk = true;
 }
 
 /**
- * Build a timeout-aware fetch with optional retries.
- * Used because Render free-tier services cold-start (wake-up can take ~60s
- * on first request after idle).
+ * Race-based hard timeout: AbortSignal.timeout() is not reliable in all
+ * browser environments for requests stalled at the TLS/network layer. A
+ * manual AbortController plus a racing timer guarantees the promise always
+ * rejects on timeout.
  */
-export async function mlFetch(
+function fetchWithTimeout(
   url: string,
-  init?: RequestInit & { timeoutMs?: number; maxAttempts?: number; attemptDelayMs?: number },
+  init: RequestInit & { timeoutMs?: number },
 ): Promise<Response> {
-  const timeoutMs = init?.timeoutMs ?? 120_000;
-  const maxAttempts = init?.maxAttempts ?? 1;
-  const attemptDelayMs = init?.attemptDelayMs ?? 15_000;
-
-  // Race-based hard timeout: AbortSignal.timeout() is not reliable in all
-  // browser environments for requests stalled at the TLS/network layer (the
-  // Render wake-up interstitial never responds). A manual AbortController
-  // plus a racing timer guarantees the promise always rejects on timeout.
-  function withTimeout(fn: () => Promise<Response>): Promise<Response> {
-    return new Promise<Response>((resolve, reject) => {
-      const timer = setTimeout(
-        () => reject(new DOMException("Request timed out", "TimeoutError")),
-        timeoutMs,
-      );
-      Promise.resolve()
-        .then(fn)
-        .then((r) => {
-          clearTimeout(timer);
-          resolve(r);
-        })
-        .catch((e) => {
-          clearTimeout(timer);
-          reject(e);
-        });
-    });
-  }
-
-  let lastError: unknown;
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeoutMs);
-      const resp = await withTimeout(() =>
+  const timeoutMs = init.timeoutMs ?? REQUEST_TIMEOUT_MS;
+  return new Promise<Response>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new DOMException("Request timed out", "TimeoutError")),
+      timeoutMs,
+    );
+    const controller = new AbortController();
+    const abortTimer = setTimeout(() => controller.abort(), timeoutMs);
+    Promise.resolve()
+      .then(() =>
         fetch(url, {
-          ...(init ?? {}),
+          ...init,
           signal: controller.signal,
         }),
-      );
-      clearTimeout(timer);
-      return resp;
-    } catch (err) {
-      lastError = err;
+      )
+      .then((r) => {
+        clearTimeout(timer);
+        clearTimeout(abortTimer);
+        resolve(r);
+      })
+      .catch((e) => {
+        clearTimeout(timer);
+        clearTimeout(abortTimer);
+        reject(e);
+      });
+  });
+}
+
+/**
+ * Call a URL with the primary endpoint first (short probe). If the primary
+ * does not respond within PRIMARY_PROBE_MS, immediately retry against the
+ * sandbox fallback with the remaining time budget. Never takes more than
+ * REQUEST_TIMEOUT_MS total.
+ */
+export async function mlFetch(
+  path: string,
+  init?: RequestInit & { timeoutMs?: number; maxAttempts?: number },
+): Promise<Response> {
+  const budgetMs = init?.timeoutMs ?? REQUEST_TIMEOUT_MS;
+  const maxAttempts = init?.maxAttempts ?? 1;
+  const primary = resolveMlBackend();
+
+  // Skip the primary entirely if a previous probe already proved it broken.
+  const tryPrimary = !primaryProbed || primaryOk;
+
+  async function attempt(base: string, remainingMs: number): Promise<Response> {
+    const start = Date.now();
+    let lastError: unknown;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const spent = Date.now() - start;
+      const attemptBudget = Math.max(2_000, Math.min(remainingMs - spent * attempt, remainingMs));
+      try {
+        const resp = await fetchWithTimeout(`${base}${path}`, { ...(init ?? {}), timeoutMs: attemptBudget });
+        // Render's Cloudflare bot challenge returns an HTML interstitial
+        // (200 OK, text/html) instead of JSON. Treat it as unreachable.
+        if (resp.ok && resp.headers.get("content-type")?.includes("text/html")) {
+          const body = await resp.text().catch(() => "");
+          if (!body.trim().startsWith("{")) {
+            throw new DOMException("Non-JSON response (service interstitial)", "NetworkError");
+          }
+        }
+        if (resp.ok) return resp;
+        lastError = new Error(`HTTP ${resp.status}`);
+      } catch (err) {
+        lastError = err;
+      }
       if (attempt < maxAttempts - 1) {
-        await new Promise((r) => setTimeout(r, attemptDelayMs));
+        await new Promise((r) => setTimeout(r, 1_000));
       }
     }
+    throw lastError;
   }
-  throw lastError;
+
+  if (tryPrimary) {
+    try {
+      const resp = await attempt(primary.base, PRIMARY_PROBE_MS);
+      primaryProbed = true;
+      primaryOk = true;
+      return resp;
+    } catch {
+      primaryProbed = true;
+      primaryOk = false;
+    }
+  }
+
+  // Failover: sandbox fallback with whatever budget remains (never exceeds 30s total).
+  return attempt(FALLBACK_BACKEND_URL, budgetMs);
 }
 
 /** Health-check the ML backend (status only — no model required to be ready). */
 export async function checkMlHealth(): Promise<"online" | "offline"> {
   try {
-    const { base } = resolveMlBackend();
-    const resp = await fetch(`${base}/health`, { signal: AbortSignal.timeout(30_000) });
+    const resp = await mlFetch("/health", { timeoutMs: REQUEST_TIMEOUT_MS });
     if (resp.ok) {
       const data = (await resp.json().catch(() => null)) as Record<string, unknown> | null;
-      // Even while the model is loading, the service is reachable (warming).
       const ready = data?.model_ready ?? null;
       void ready;
       return "online";
