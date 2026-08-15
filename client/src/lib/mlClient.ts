@@ -7,6 +7,8 @@
  * /api/ml proxy is only used as a dev-mode fallback (when VITE_ML_BACKEND_URL
  * is unset, requests go to /api/ml which the sandbox proxy forwards to the
  * local Flask instance).
+ *
+ * Version marker (forces fresh production build): v2.3-hardened-timeouts
  */
 
 /** Deployed ML backend on Render (primary production endpoint). */
