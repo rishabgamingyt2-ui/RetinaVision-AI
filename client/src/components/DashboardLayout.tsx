@@ -21,12 +21,12 @@ import {
 } from "lucide-react";
 
 const navItems = [
-  { label: "Image Analysis", href: "/dashboard/analysis", icon: ScanLine, page: "analysis" },
-  { label: "History", href: "/dashboard/history", icon: Clock, page: "history" },
-  { label: "Reports", href: "/dashboard/reports", icon: FileText, page: "reports" },
-  { label: "Performance", href: "/dashboard/metrics", icon: BarChart3, page: "metrics" },
-  { label: "Settings", href: "/dashboard/settings", icon: Settings, page: "settings" },
-  { label: "About", href: "/dashboard/about", icon: Info, page: "about" },
+  { label: "Image Analysis", href: "/analysis", icon: ScanLine, page: "analysis" },
+  { label: "History", href: "/history", icon: Clock, page: "history" },
+  { label: "Reports", href: "/reports", icon: FileText, page: "reports" },
+  { label: "Performance", href: "/metrics", icon: BarChart3, page: "metrics" },
+  { label: "Settings", href: "/settings", icon: Settings, page: "settings" },
+  { label: "About", href: "/about", icon: Info, page: "about" },
 ];
 
 function NavContent({ currentPage, onItemClick }: { currentPage: string; onItemClick: () => void }) {
@@ -87,7 +87,7 @@ function NavContent({ currentPage, onItemClick }: { currentPage: string; onItemC
 }
 
 function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const match = useRoute("/dashboard/:page");
+  const match = useRoute("/:page");
   const currentPage = (match && match[1]) ? match[1].page : "analysis";
 
   return (

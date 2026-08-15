@@ -29,9 +29,8 @@ import {
 // ---------------------------------------------------------------------------
 // Configuration
 // ---------------------------------------------------------------------------
-// Direct browser calls to the Render ML backend (Option C):
-// https://retinavision-ml-backend.onrender.com
-import { checkMlHealth, markMlBackendUnreachable, markMlBackendReachable, mlFetch, REQUEST_TIMEOUT_MS, resolveMlBackend } from "@/lib/mlClient";
+// Same-origin ONNX inference (self-contained architecture v4).
+import { analyzeImage, checkMlHealth, REQUEST_TIMEOUT_MS } from "@/lib/mlClient";
 
 // Disease classes the model predicts
 const diseaseClasses = [
@@ -160,24 +159,17 @@ export default function ImageAnalysis() {
   const [analysisProgress, setAnalysisProgress] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Resolve the ML backend fresh on every render so a fallback switch is
-  // picked up immediately.
-  const { base: ML_BACKEND_URL, mode: mlMode } = resolveMlBackend();
-  const ML_MODE_LABEL =
-    mlMode === "direct"
-      ? "ML backend (direct)"
-      : "local proxy";
-
-  // Check ML backend health on mount (Render free tier wakes on first request)
+  // Check ML backend health on mount (internal ONNX model on the same server)
   const checkHealth = useCallback(async () => {
-    if (!ML_BACKEND_URL) {
+    const health = await checkMlHealth();
+    if (health.status === "online") {
+      setAiStatus("online");
+    } else if (health.status === "loading") {
       setAiStatus("unknown");
-      return;
+    } else {
+      setAiStatus("offline");
     }
-    const status = await checkMlHealth();
-    if (status === "online") markMlBackendReachable();
-    setAiStatus(status);
-  }, [ML_BACKEND_URL]);
+  }, []);
   useEffect(() => {
     checkHealth();
   }, [checkHealth]);
@@ -251,93 +243,46 @@ export default function ImageAnalysis() {
     const progressInterval = simulateProgress();
 
     try {
-      // If ML backend is configured, call the real API
-      if (ML_BACKEND_URL) {
-        const formData = new FormData();
-        formData.append("image", uploadedFile);
+      toast.loading("Running EfficientNet-B0 inference on the server...", { id: "analyzing" });
 
-        toast.loading("Sending image to EfficientNet-B0 for analysis...", { id: "analyzing" });
+      // The server runs the real trained model (ONNX). Strict 30s budget:
+      // a timed-out request fails fast with a clear error — the UI never
+      // stays stuck at ~90%.
+      const data = await analyzeImage(uploadedFile);
 
-        const predictPath = mlMode === "proxy" ? "/api/ml/predict" : "/predict";
+      clearInterval(progressInterval);
+      setAnalysisProgress(100);
 
-        // mlFetch handles endpoint selection, probing, and automatic failover.
-        // Total budget is strict: 30 seconds (REQUEST_TIMEOUT_MS). If the
-        // backend does not respond within that window, a clear error is shown
-        // — the UI never stays stuck at ~90%.
-        let response: Response | null = null;
-        let usedFallback = false;
-        const startedAt = Date.now();
-        try {
-          response = await mlFetch(predictPath, {
-            method: "POST",
-            body: formData,
-            timeoutMs: REQUEST_TIMEOUT_MS,
-            maxAttempts: 1,
-          });
-          if (!response.ok) {
-            response = null;
-            throw new Error(`ML backend returned HTTP ${response!.status}`);
-          }
-          markMlBackendReachable();
-        } catch (primaryErr: any) {
-          markMlBackendUnreachable();
-          // Retry once against the failover endpoint if time budget allows.
-          const elapsed = Date.now() - startedAt;
-          if (elapsed < REQUEST_TIMEOUT_MS - 4_000) {
-            usedFallback = true;
-            response = await mlFetch(predictPath, {
-              method: "POST",
-              body: formData,
-              timeoutMs: Math.max(4_000, REQUEST_TIMEOUT_MS - elapsed),
-              maxAttempts: 1,
-            }).then((r) => {
-              markMlBackendReachable();
-              return r;
-            });
-          } else {
-            const timedOut = primaryErr instanceof DOMException && primaryErr.name === "TimeoutError";
-            throw new Error(
-              timedOut
-                ? "The ML backend did not respond within 30 seconds. Please try again."
-                : (primaryErr?.message || "Connection to ML backend failed"),
-            );
-          }
-        }
+      // Map the ONNX backend response into the page's InferenceResult shape
+      const mapped: InferenceResult = {
+        success: true,
+        prediction: data.prediction,
+        confidence: data.confidence,
+        confidence_percentage: data.confidence,
+        class_probabilities: data.probabilities,
+        diagnosis: {
+          disease: data.prediction,
+          confidence: data.confidence,
+          severity: diseaseInfo[data.prediction]?.emergencyLevel ?? "Medium",
+          description: data.diagnosis,
+          recommendation: diseaseInfo[data.prediction]?.recommendedAction ?? "",
+          severity_color: getRiskColor(diseaseInfo[data.prediction]?.emergencyLevel ?? "Medium"),
+        },
+        gradcam: data.gradcam.overlay,
+        original_image: data.gradcam.original,
+        model_info: {
+          architecture: data.model,
+          num_classes: diseaseClasses.length,
+          classes: diseaseClasses,
+          device: "cpu",
+        },
+      };
 
-        clearInterval(progressInterval);
-        setAnalysisProgress(100);
-
-        if (!response) {
-          throw new Error("No response received from any backend");
-        }
-        const contentType = response.headers.get("content-type") || "";
-        if (!response.ok || !contentType.includes("application/json")) {
-          const text = await response.text().catch(() => "");
-          throw new Error(`Server returned ${response.status}: ${text.slice(0, 120)}`);
-        }
-
-        const data: InferenceResult = await response.json();
-
-        if (data.success) {
-          setResult(data);
-          setShowGradCam(true);
-          toast.dismiss("analyzing");
-          toast.success(
-            `${usedFallback ? "Fallback backend: " : ""}Prediction complete: ${data.prediction} (${data.confidence_percentage}%)`,
-          );
-          setAiStatus("online");
-        } else {
-          throw new Error("Inference returned no result");
-        }
-      } else {
-        // Real ML backend is required — no mock predictions allowed
-        clearInterval(progressInterval);
-        setAnalysisProgress(0);
-        throw new Error(
-          "ML backend not connected. Set VITE_ML_BACKEND_URL in Settings > Secrets. " +
-          "Deploy the Flask backend from ml-backend/ first."
-        );
-      }
+      setResult(mapped);
+      setShowGradCam(true);
+      toast.dismiss("analyzing");
+      toast.success(`Prediction complete: ${data.prediction} (${data.confidence.toFixed(2)}%)`);
+      setAiStatus("online");
     } catch (error: any) {
       clearInterval(progressInterval);
       setAnalysisProgress(0);
@@ -365,7 +310,7 @@ export default function ImageAnalysis() {
     if (!result?.class_probabilities) return [];
     return Object.entries(result.class_probabilities)
       .sort(([, a], [, b]) => b - a)
-      .map(([label, conf]) => ({ label, confidence: conf * 100 }));
+      .map(([label, conf]) => ({ label, confidence: conf as number }));
   };
 
   const topPred = getTopPrediction();
@@ -376,25 +321,6 @@ export default function ImageAnalysis() {
 
   return (
     <div className="space-y-6">
-      {/* ML Backend Warning Banner */}
-      {!ML_BACKEND_URL && (
-        <motion.div
-          initial={{ opacity: 0, y: -10 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 flex items-start gap-3"
-        >
-          <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
-          <div>
-            <p className="text-sm font-semibold text-amber-300">ML Backend Not Connected</p>
-            <p className="text-xs text-amber-300/70 mt-1">
-              Real AI inference requires the Flask backend to be deployed and connected.
-              Set <code className="bg-amber-500/20 px-1.5 py-0.5 rounded font-mono text-[10px]">VITE_ML_BACKEND_URL</code> in Settings &gt; Secrets.
-              See <code className="bg-amber-500/20 px-1.5 py-0.5 rounded font-mono text-[10px]">ml-backend/DEPLOYMENT.md</code> for instructions.
-            </p>
-          </div>
-        </motion.div>
-      )}
-
       {/* Page Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -410,12 +336,10 @@ export default function ImageAnalysis() {
               aiStatus === "offline" ? "bg-red-400" : "bg-gray-400"
             }`} />
             <span className="font-mono text-xs">
-              {ML_BACKEND_URL ? (
-                aiStatus === "online" ? "ML Backend Online" :
-                aiStatus === "offline" ? "ML Backend Offline" : "Checking backend..."
-              ) : "Backend Required"}
+              {aiStatus === "online" ? "ML Backend Online" :
+               aiStatus === "offline" ? "ML Backend Offline" : "Checking backend..."}
             </span>
-            <span className="font-mono text-[10px] text-gray-500 hidden sm:inline">{ML_MODE_LABEL}</span>
+            <span className="font-mono text-[10px] text-gray-500 hidden sm:inline">EfficientNet-B0 (ONNX)</span>
           </div>
         </div>
       </div>
@@ -492,11 +416,6 @@ export default function ImageAnalysis() {
                 <>
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                   Analyzing...
-                </>
-              ) : !ML_BACKEND_URL ? (
-                <>
-                  <AlertTriangle className="w-4 h-4 mr-2" />
-                  Connect ML Backend
                 </>
               ) : (
                 <>

@@ -1,7 +1,7 @@
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/NotFound";
-import { Route, Switch, useLocation } from "wouter";
+import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import LandingPage from "./pages/LandingPage";
@@ -16,13 +16,15 @@ import ReportsPage from "./pages/ReportsPage";
 function DashboardRoutes() {
   return (
     <Switch>
-      <Route path="/dashboard/analysis" component={ImageAnalysis} />
-      <Route path="/dashboard/history" component={HistoryPage} />
-      <Route path="/dashboard/reports" component={ReportsPage} />
-      <Route path="/dashboard/metrics" component={MetricsPage} />
-      <Route path="/dashboard/settings" component={SettingsPage} />
-      <Route path="/dashboard/about" component={AboutPage} />
-      <Route path="/dashboard" component={ImageAnalysis} />
+      <Route path="/analysis" component={ImageAnalysis} />
+      <Route path="/history" component={HistoryPage} />
+      <Route path="/reports" component={ReportsPage} />
+      <Route path="/metrics" component={MetricsPage} />
+      <Route path="/settings" component={SettingsPage} />
+      <Route path="/about" component={AboutPage} />
+      {/* "/dashboard" itself (basepath strips the prefix) */}
+      <Route path="/" component={ImageAnalysis} />
+      <Route component={NotFound} />
     </Switch>
   );
 }
@@ -31,7 +33,8 @@ function AppRoutes() {
   return (
     <Switch>
       <Route path="/" component={LandingPage} />
-      <Route path="/dashboard/:rest*">
+      {/* nest: matches /dashboard and any /dashboard/* subpath, rendering the sidebar layout */}
+      <Route path="/dashboard" nest>
         <DashboardLayout>
           <DashboardRoutes />
         </DashboardLayout>

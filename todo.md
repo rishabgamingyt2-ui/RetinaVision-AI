@@ -60,6 +60,23 @@
   - [ ] Test real image upload → prediction → Grad-CAM on preview and deployed site
 - [ ] Render diagnosis: identify why service stays at "almost live" (needs user log/token)
 
+## Production-readiness round (user: public production site, B then A)
+
+- [ ] Read webdev-custom-dockerfile skill + persistent-computing considerations for PyTorch backend on production host
+- [ ] Create server-side ML inference route (/api/ml/predict, /api/ml/health) backed by best_model.pth inside the project
+- [ ] Handle model download: pull best_model.pth from GitHub release/CDN on first start or store locally (must not rely on sandbox files)
+- [ ] Serve predictions end-to-end from the project's own production deployment (no sandbox fallback dependency)
+- [ ] Update mlClient.ts: default target = same-origin /api/ml route (works on dev + production)
+- [ ] Verify: image upload, disease prediction, confidence scores, Grad-CAM heatmap, PDF report, analysis history
+- [ ] Remove sandbox failover as primary path (keep as dev convenience only)
+- [ ] Publish + test on deployed URL: https://retinaiapp-7xguqjmt.manus.space
+- [ ] Prepare Railway package: Dockerfile (optimized for Railway), Procfile/config, railway config if any, .env.template, deployment guide
+- [ ] Prepare Vercel package: vercel.json, production build, VITE env var docs, deployment guide
+- [ ] Push Railway + Vercel configs to GitHub main branch
+- [ ] Document custom domain configuration for both frontend (Manus domains + Vercel) and backend (Railway)
+- [ ] Write deployment report with final URLs, GitHub links, and step-by-step instructions
+- [ ] Deliver report + links to user
+
 ## Follow-up round (user directive)
 
 - [x] Verify backend /health returns HTTP 200 (Render frozen; sandbox fallback verified healthy)
@@ -70,3 +87,27 @@
 - [x] Automatic retry via probe-based failover to sandbox fallback backend
 - [x] End-to-end browser test: prediction (AMD 40.34%) + confidence + Grad-CAM heatmap displayed
 - [x] Commit and auto-publish all fixes
+
+## Internal ONNX round (current)
+
+- [x] Fix sharp colorspace errors in server/ml/inference.ts (.toColorspace('rgb') -> .removeAlpha())
+- [x] Fix renderHeatmaps overlay composite ("unsupported image format") via JS alpha blend
+- [x] Verify /api/ml/predict returns real ONNX prediction + Grad-CAM images in <0.3s
+- [x] Restore LandingPage (home)
+- [x] Restore DashboardLayout with sidebar nav
+- [x] Restore ImageAnalysis page (upload + analyze + Grad-CAM)
+- [x] Restore HistoryPage (persisted to browser localStorage)
+- [x] Restore ReportsPage (PDF report generation)
+- [x] Restore MetricsPage
+- [x] Restore SettingsPage
+- [x] Restore AboutPage
+- [x] Restore index.css Clinical Nebula theme + App.tsx routes (fixed wouter nest double-base bug)
+- [x] Point ImageAnalysis at internal /api/ml/predict via mlClient.ts
+- [x] E2E browser test of upload+analyze (real ONNX prediction AMD 47.68% + 6-class bars + Grad-CAM triplet)
+- [x] Fix probability bars showing 4768% (server already returns 0-100; removed stray *100 in getPredictions)
+- [x] Verify confidence %, diagnosis, Grad-CAM images all displayed correctly (browser: prediction + High Risk badge + 47.68% + 6-class bars summing to 100 + 3 Grad-CAM PNGs + Download PDF)
+- [x] pnpm test passing (5 tests incl. new server/ml/inference.test.ts) + TypeScript clean
+- [x] Checkpoint saved & auto-published
+- [ ] Railway package (Dockerfile + guide) for Express app with ONNX
+- [ ] Vercel package (vercel.json + guide)
+- [ ] Deployment report delivered
