@@ -31,8 +31,10 @@ import {
 // ---------------------------------------------------------------------------
 // Direct browser calls to the Render ML backend (Option C):
 // https://retinavision-ml-backend.onrender.com
-import { resolveMlBackend, mlFetch } from "@/lib/mlClient";
-const { base: ML_BACKEND_URL, mode: mlMode } = resolveMlBackend();
+import { checkMlHealth, effectiveMlBackend, markMlBackendUnreachable, markMlBackendReachable, mlFetch } from "@/lib/mlClient";
+
+// Resolve fresh on every render so a Runtime-render override (or fallback) is picked up.
+const { base: ML_BACKEND_URL, mode: mlMode } = effectiveMlBackend();
 const ML_MODE_LABEL = mlMode === "direct" ? "Render (direct)" : "local proxy";
 
 // Disease classes the model predicts
@@ -168,7 +170,9 @@ export default function ImageAnalysis() {
       setAiStatus("unknown");
       return;
     }
-    setAiStatus(await import("@/lib/mlClient").then((m) => m.checkMlHealth()));
+    const status = await checkMlHealth();
+    if (status === "online") markMlBackendReachable();
+    setAiStatus(status);
   }, [ML_BACKEND_URL]);
   useEffect(() => {
     checkHealth();
@@ -251,12 +255,26 @@ export default function ImageAnalysis() {
         toast.loading("Sending image to EfficientNet-B0 for analysis...", { id: "analyzing" });
 
         const predictUrl = mlMode === "proxy" ? "/api/ml/predict" : `${ML_BACKEND_URL}/predict`;
-        const response = await mlFetch(predictUrl, {
+        let response = await mlFetch(predictUrl, {
           method: "POST",
           body: formData,
           timeoutMs: 150_000,
           maxAttempts: 3,
           attemptDelayMs: 20_000,
+        }).catch((err: unknown) => {
+          // Primary endpoint unreachable: mark it, switch to the sandbox fallback, retry once.
+          markMlBackendUnreachable();
+          void err;
+          const fallback = effectiveMlBackend();
+          return mlFetch(`${fallback.base}/predict`, {
+            method: "POST",
+            body: formData,
+            timeoutMs: 150_000,
+            maxAttempts: 1,
+          }).then((r) => {
+            markMlBackendReachable();
+            return r;
+          });
         });
 
         clearInterval(progressInterval);
