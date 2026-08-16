@@ -84,6 +84,26 @@ async function modelSource(storagePath: string): Promise<string> {
     const port = parseInt(process.env.PORT || "3000");
     return `http://localhost:${port}${storagePath}`;
   }
+  // External hosting override (Railway/Vercel/self-hosted): serve models from
+  // your own storage — set ML_MODEL_BASE_URL to an https:// prefix, e.g.
+  // ML_MODEL_BASE_URL=https://your-cdn.example.com/models, or a file:// path
+  // when the model is bundled inside the container image.
+  const overrideBase = (process.env.ML_MODEL_BASE_URL || "").replace(/\/+$/, "");
+  if (overrideBase) {
+    // storagePath looks like "/manus-storage/best_model_inline_59ab4bc7.onnx";
+    // external storage (CDN, bucket, or bundled directory) keys models by the
+    // file's basename only.
+    const fileName = path.basename(storagePath);
+    if (/^https?:\/\//i.test(overrideBase)) {
+      return `${overrideBase}/${fileName}`;
+    }
+    // Anything else is treated as a local directory: resolve it and append the
+    // model file name as a filesystem path.
+    const localDir = overrideBase.startsWith("file://")
+      ? overrideBase.slice("file://".length)
+      : path.resolve(overrideBase);
+    return path.join(localDir, fileName);
+  }
   const base = forgeBaseUrl();
   const key = forgeHeaders();
   if (!base || !key) {
